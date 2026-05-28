@@ -1,5 +1,12 @@
 pfGuide = CreateFrame("Frame", "pfGuideFrame", UIParent)
 
+pfGuide.STATE = {
+    UNAVAILABLE = "UNAVAILABLE",
+    AVAILABLE = "AVAILABLE",
+    ACTIVE_INCOMPLETE = "ACTIVE_INCOMPLETE",
+    ACTIVE_COMPLETE = "ACTIVE_COMPLETE"
+}
+
 -- Простая команда для теста
 SLASH_PFGUIDE1 = "/guide"
 SlashCmdList["PFGUIDE"] = function(msg)
@@ -8,30 +15,70 @@ end
 
 function pfGuide:TestCurrentQuests()
     print("|cff00ff00[pfGuide]|r Анализ текущих квестов:")
-    
-    -- pfQuest.questlog уже хранит состояние твоего журнала!
     local activeQuests = 0
+
     for questid, data in pairs(pfQuest.questlog) do
         local qtitle = data.title
-        local state = data.state -- строка вроде "track1todo2done"
-        
-        -- Если стейт содержит "todo", значит квест не завершен
-        if string.find(state or "", "todo") then
-            print(" - Нужно сделать: " .. qtitle .. " (ID: " .. questid .. ")")
+        local state = self:GetQuestState(questid)
+
+        if state == self.STATE.ACTIVE_INCOMPLETE then
+            print(" - В процессе: " .. qtitle .. " (ID: " .. questid .. ")")
+            activeQuests = activeQuests + 1
+        elseif state == self.STATE.ACTIVE_COMPLETE then
+            print(" - Готов к сдаче: " .. qtitle .. " (ID: " .. questid .. ")")
             activeQuests = activeQuests + 1
         end
     end
-    
+
     if activeQuests == 0 then
-        print("Нет активных незавершенных квестов.")
+        print("Нет активных квестов или квестов, готовых к сдаче.")
     end
+end
+
+function pfGuide:GetQuestState(questid)
+    local data = pfQuest.questlog[questid]
+    if not data or not data.qlogid then
+        return self.STATE.UNAVAILABLE
+    end
+
+    local qlogid = data.qlogid
+    local objectives = GetNumQuestLeaderBoards(qlogid) or 0
+
+    if objectives == 0 then
+        return self.STATE.ACTIVE_COMPLETE
+    end
+
+    for i = 1, objectives do
+        local _, _, done = GetQuestLogLeaderBoard(i, qlogid)
+        if not done then
+            return self.STATE.ACTIVE_INCOMPLETE
+        end
+    end
+
+    return self.STATE.ACTIVE_COMPLETE
+end
+
+function pfGuide:IsQuestTurnInReady(qlogid)
+    local objectives = GetNumQuestLeaderBoards(qlogid) or 0
+    if objectives == 0 then
+        return true
+    end
+
+    for i = 1, objectives do
+        local _, _, done = GetQuestLogLeaderBoard(i, qlogid)
+        if not done then
+            return false
+        end
+    end
+
+    return true
 end
 
 function pfGuide:GetFirstTarget()
     local map = pfMap:GetMapID(GetCurrentMapContinent(), GetCurrentMapZone())
     
     for questid, data in pairs(pfQuest.questlog) do
-        if string.find(data.state or "", "todo") then
+        if self:GetQuestState(questid) == self.STATE.ACTIVE_INCOMPLETE then
             -- 1. Симулируем запрос к базе (как это делает клик в трекере)
             local meta = { ["addon"] = "PFGUIDE", ["qlogid"] = data.qlogid }
             pfMap:DeleteNode("PFGUIDE") -- чистим старые
@@ -40,7 +87,6 @@ function pfGuide:GetFirstTarget()
             -- 2. Достаем сгенерированные точки из pfMap
             if pfMap.nodes["PFGUIDE"] and pfMap.nodes["PFGUIDE"][map] then
                 for coords, nodeData in pairs(pfMap.nodes["PFGUIDE"][map]) do
-                    -- Достаем x и y из строки типа "52.1|44.2"
                     local _, _, x, y = string.find(coords, "(.*)|(.*)")
                     if x and y then
                         print("|cff00ff00[pfGuide]|r Иди сюда: " .. data.title .. " -> X: " .. x .. " Y: " .. y)
@@ -91,9 +137,9 @@ function pfGuide:GetBestTarget()
     
     pfMap:DeleteNode("PFGUIDE")
     
-    -- Запрашиваем точки для всех незавершенных квестов
+    -- Запрашиваем точки для всех активных незавершенных квестов
     for questid, data in pairs(pfQuest.questlog) do
-        if string.find(data.state or "", "todo") then
+        if self:GetQuestState(questid) == self.STATE.ACTIVE_INCOMPLETE then
             local meta = { ["addon"] = "PFGUIDE", ["qlogid"] = data.qlogid }
             pfDatabase:SearchQuestID(questid, meta)
         end
@@ -179,6 +225,11 @@ pfGuideWindow.close:SetScript("OnClick", function()
     this:GetParent():Hide()
 end)
 
+pfGuideWindow.emptyLabel = pfGuideWindow:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+pfGuideWindow.emptyLabel:SetPoint("CENTER", pfGuideWindow, "CENTER", 0, -20)
+pfGuideWindow.emptyLabel:SetText("Нет квестов для сдачи на этой карте.")
+pfGuideWindow.emptyLabel:Hide()
+
 -- ScrollFrame для списка квестов
 pfGuideWindow.scroll = CreateFrame("ScrollFrame", nil, pfGuideWindow)
 pfGuideWindow.scroll:SetPoint("TOPLEFT", pfGuideWindow, "TOPLEFT", 8, -35)
@@ -249,25 +300,24 @@ function pfGuide:RefreshWindow()
     
     pfMap:DeleteNode("PFGUIDE")
     
-    -- Собираем все активные квесты
+    -- Собираем все квесты, готовые к сдаче
     local questList = {}
     for questid, data in pairs(pfQuest.questlog) do
-        if string.find(data.state or "", "todo") then
-            table.insert(questList, {questid = questid, title = data.title})
+        if self:GetQuestState(questid) == self.STATE.ACTIVE_COMPLETE then
+            table.insert(questList, {questid = questid, title = data.title, qlogid = data.qlogid})
         end
     end
     
     -- Запрашиваем координаты для всех
     for _, quest in ipairs(questList) do
-        local meta = { ["addon"] = "PFGUIDE", ["qlogid"] = pfQuest.questlog[quest.questid].qlogid }
+        local meta = { ["addon"] = "PFGUIDE", ["qlogid"] = quest.qlogid }
         pfDatabase:SearchQuestID(quest.questid, meta)
     end
     
     -- Обновляем кнопки
     local btnIndex = 1
     if pfMap.nodes["PFGUIDE"] and pfMap.nodes["PFGUIDE"][map] then
-        for questid, data in ipairs(questList) do
-            local coords = nil
+        for _, data in ipairs(questList) do
             local dist = 999999
             local bestX, bestY, bestTitle = nil, nil, nil
             
@@ -298,6 +348,12 @@ function pfGuide:RefreshWindow()
                 btnIndex = btnIndex + 1
             end
         end
+    end
+    
+    if btnIndex == 1 then
+        pfGuideWindow.emptyLabel:Show()
+    else
+        pfGuideWindow.emptyLabel:Hide()
     end
     
     -- Скрываем неиспользованные кнопки
