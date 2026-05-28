@@ -1,0 +1,14 @@
+pfDB = {
+  ["areatrigger"] = {},
+  ["items"] = {},
+  ["meta"] = {},
+  ["minimap"] = {},
+  ["objects"] = {},
+  ["professions"] = {},
+  ["quests"] = {},
+  ["quests-itemreq"] = {},
+  ["questxp"] = {},
+  ["refloot"] = {},
+  ["units"] = {},
+  ["zones"] = {},
+}

@@ -1,0 +1,5 @@
+# Ignore backup folders
+db-backup-*/
+
+# Allow toolbox output for reference only
+!toolbox/output/
