@@ -221,6 +221,8 @@ function pfGuide:ScorePOI(poi, playerX, playerY)
 end
 
 function pfGuide:GetActivePOIs()
+    pfQuest_config.guideBlacklist = pfQuest_config.guideBlacklist or {}
+
     local bestPois = {}
     local currentZone = pfMap:GetMapID(GetCurrentMapContinent(), GetCurrentMapZone())
     if not currentZone then return {} end
@@ -251,14 +253,16 @@ function pfGuide:GetActivePOIs()
 
     -- 1. Добавляем точки активных квестов (в процессе и на сдачу)
     for questid, data in pairs(pfQuest.questlog) do
-        local state = self:GetQuestState(questid)
-        if state ~= self.STATE.UNAVAILABLE then
-            local questPOIs = self:GetQuestPOIs(questid, state)
-            for _, poi in ipairs(questPOIs) do
-                poi.questid = questid
-                poi.state = state
-                poi.questTitle = data.title
-                addBestPOI(poi)
+        if not pfQuest_config.guideBlacklist[questid] then
+            local state = self:GetQuestState(questid)
+            if state ~= self.STATE.UNAVAILABLE then
+                local questPOIs = self:GetQuestPOIs(questid, state)
+                for _, poi in ipairs(questPOIs) do
+                    poi.questid = questid
+                    poi.state = state
+                    poi.questTitle = data.title
+                    addBestPOI(poi)
+                end
             end
         end
     end
@@ -266,8 +270,8 @@ function pfGuide:GetActivePOIs()
     -- 2. Добавляем точки для ВЗЯТИЯ новых квестов
     if pfDB.quests and pfDB.quests.data then
         for questid in pairs(pfDB.quests.data) do
-            -- Проверяем, что квеста нет в логе и он нам доступен по уровню/расе
-            if not pfQuest.questlog[questid] and pfDatabase:QuestFilter(questid, plevel, pclass, prace) then
+            -- Проверяем, что квеста нет в логе, он не в черном списке и он нам доступен по уровню/расе
+            if not pfQuest_config.guideBlacklist[questid] and not pfQuest.questlog[questid] and pfDatabase:QuestFilter(questid, plevel, pclass, prace) then
                 local questPOIs = self:GetQuestPOIs(questid, self.STATE.AVAILABLE)
                 if next(questPOIs) then
                     -- ИСПРАВЛЕНИЕ: Правильно достаем локализованное название квеста
@@ -394,8 +398,29 @@ local function CreateQuestButton(i)
         end
     end)
 
-    btn:SetScript("OnEnter", function() btn.bg:SetTexture(1, 1, 1, 0.2) end)
-    btn:SetScript("OnLeave", function() btn.bg:SetTexture(1, 1, 1, (i % 2 == 0) and 0.05 or 0.02) end)
+    btn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    btn:SetScript("OnClick", function(self, button)
+        if button == "RightButton" and self.poi then
+            pfQuest_config.guideBlacklist[self.poi.questid] = true
+            print("|cff00ff00[pfGuide]|r Квест пропущен: " .. self.poi.questTitle)
+            pfGuide:RefreshWindow()
+            pfGuide:UpdateArrow()
+        end
+    end)
+
+    btn:SetScript("OnEnter", function()
+        btn.bg:SetTexture(1, 1, 1, 0.2)
+        if btn.poi then
+            GameTooltip:SetOwner(btn, "ANCHOR_RIGHT")
+            GameTooltip:SetText(btn.poi.questTitle, 1, 1, 1)
+            GameTooltip:AddLine("Правый клик - пропустить квест", 1, 0, 0)
+            GameTooltip:Show()
+        end
+    end)
+    btn:SetScript("OnLeave", function()
+        btn.bg:SetTexture(1, 1, 1, (i % 2 == 0) and 0.05 or 0.02)
+        GameTooltip:Hide()
+    end)
 
     return btn
 end
@@ -484,6 +509,15 @@ end
 -- Слэш команды
 SLASH_PFGUIDE1 = "/guide"
 SlashCmdList["PFGUIDE"] = function(msg)
+    msg = string.lower(msg or "")
+    if msg == "reset" then
+        pfQuest_config.guideBlacklist = {}
+        print("|cff00ff00[pfGuide]|r Черный список квестов очищен.")
+        pfGuide:RefreshWindow()
+        pfGuide:UpdateArrow()
+        return
+    end
+
     if pfGuideWindow:IsShown() then
         pfGuideWindow:Hide()
     else
