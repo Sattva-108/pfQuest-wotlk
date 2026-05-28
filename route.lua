@@ -149,7 +149,7 @@ pfQuest.route.SetTarget = function(node, default)
     or node.layer ~= targetLayer
     or node.texture ~= targetTexture )
   then
-    pfMap.queue_update = true
+    pfMap.queue_update = GetTime()
   end
 
   targetTitle = node and node.title or nil

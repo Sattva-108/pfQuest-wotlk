@@ -29,7 +29,8 @@ init\zhTW-tbc.xml
 init\esES-tbc.xml
 init\ruRU-tbc.xml
 init\ptBR-tbc.xml
-guide.lua
+
 debug.lua
 pfquest_debug_browser.lua
 init\addon.xml
+guide.lua
