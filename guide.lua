@@ -237,6 +237,7 @@ function pfGuide:GetActivePOIs()
     local _, class = UnitClass("player")
     local pclass = pfDatabase:GetBitByClass(class)
 
+    -- Вспомогательная функция для дедупликации (оставляем только ближайшую точку)
     local function addBestPOI(poi)
         if poi.zone ~= currentZone then return end
         poi.score = self:ScorePOI(poi, pX, pY)
@@ -248,6 +249,7 @@ function pfGuide:GetActivePOIs()
         end
     end
 
+    -- 1. Добавляем точки активных квестов (в процессе и на сдачу)
     for questid, data in pairs(pfQuest.questlog) do
         local state = self:GetQuestState(questid)
         if state ~= self.STATE.UNAVAILABLE then
@@ -261,27 +263,35 @@ function pfGuide:GetActivePOIs()
         end
     end
 
-    for questid in pairs(pfDB.quests.data) do
-        if not pfQuest.questlog[questid] and pfDatabase:QuestFilter(questid, plevel, pclass, prace) then
-            local questPOIs = self:GetQuestPOIs(questid, self.STATE.AVAILABLE)
-            if next(questPOIs) then
-                local quest = pfDB.quests.data[questid]
-                local title = quest.title or "Unknown"
-                for _, poi in ipairs(questPOIs) do
-                    poi.questid = questid
-                    poi.state = self.STATE.AVAILABLE
-                    poi.questTitle = title
-                    addBestPOI(poi)
+    -- 2. Добавляем точки для ВЗЯТИЯ новых квестов
+    if pfDB.quests and pfDB.quests.data then
+        for questid in pairs(pfDB.quests.data) do
+            -- Проверяем, что квеста нет в логе и он нам доступен по уровню/расе
+            if not pfQuest.questlog[questid] and pfDatabase:QuestFilter(questid, plevel, pclass, prace) then
+                local questPOIs = self:GetQuestPOIs(questid, self.STATE.AVAILABLE)
+                if next(questPOIs) then
+                    -- ИСПРАВЛЕНИЕ: Правильно достаем локализованное название квеста
+                    local locData = pfDB["quests"]["loc"][questid]
+                    local title = (locData and locData["T"]) or "Unknown"
+
+                    for _, poi in ipairs(questPOIs) do
+                        poi.questid = questid
+                        poi.state = self.STATE.AVAILABLE
+                        poi.questTitle = title
+                        addBestPOI(poi)
+                    end
                 end
             end
         end
     end
 
+    -- Перекладываем в обычный массив для сортировки
     local pois = {}
     for _, poi in pairs(bestPois) do
         table.insert(pois, poi)
     end
 
+    -- Сортируем от самого низкого (лучшего) к самому высокому (худшему) score
     table.sort(pois, function(a, b)
         return a.score < b.score
     end)
