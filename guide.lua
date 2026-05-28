@@ -288,20 +288,37 @@ function pfGuide:GetQuestPOIs(questid, state)
 end
 
 function pfGuide:ScorePOI(poi, playerX, playerY)
-    local score = math.sqrt((playerX - poi.x)^2 + (playerY - poi.y)^2)
+    -- Считаем чистое расстояние
+    local dist = math.sqrt((playerX - poi.x)^2 + (playerY - poi.y)^2)
 
-    -- Бонусы за приоритет действий (вычитаем из виртуальной дистанции)
+    -- Используем квадрат расстояния (штраф за дальность)
+    local score = dist * dist
+
+    -- Уникальный ключ для идентификации этой конкретной цели
+    local poiKey = tostring(poi.questid) .. "_" .. tostring(poi.action) .. "_" .. tostring(poi.targetName)
+
+    -- ЭФФЕКТ ИНЕРЦИИ (Липкая цель):
+    -- Если эта точка уже является нашей текущей целью, даем ей огромную скидку,
+    -- чтобы стрелка не дергалась на соседние объекты при движении
+    if pfGuide.activeTargetKey == poiKey then
+        score = score - 35
+    end
+
+    -- Бонусы за приоритет действий
     if poi.action == "TurnIn" then
-        score = score - 30
+        score = score - 20
     elseif poi.action == "Accept" then
-        score = score - 15
+        score = score - 10
 
-        -- Умный приоритет: если квест открывает цепочку, поднимаем его ценность
+        -- Умный приоритет цепочек
         if poi.questid and poi.questid > 0 then
             local qData = pfDB.quests.data[poi.questid]
-            if qData and qData.chain and table.getn(qData.chain) > 0 then
-                -- Уменьшаем score (делаем точку привлекательнее одиночных квестов)
-                score = score - 12
+            if qData and qData.chain then
+                local chainCount = table.getn(qData.chain)
+                if chainCount > 0 then
+                    local chainBonus = 1 + math.min(chainCount * 0.3, 1)
+                    score = score - chainBonus
+                end
             end
         end
     end
@@ -614,6 +631,10 @@ function pfGuide:UpdateArrow()
     local pois = self:GetActivePOIs()
     if pois[1] then
         self:PointToQuest(pois[1])
+        -- Запоминаем ключ активной цели
+        pfGuide.activeTargetKey = tostring(pois[1].questid) .. "_" .. tostring(pois[1].action) .. "_" .. tostring(pois[1].targetName)
+    else
+        pfGuide.activeTargetKey = nil
     end
 end
 
