@@ -221,34 +221,67 @@ function pfGuide:ScorePOI(poi, playerX, playerY)
 end
 
 function pfGuide:GetActivePOIs()
-    local pois = {}
+    local bestPois = {}
     local currentZone = pfMap:GetMapID(GetCurrentMapContinent(), GetCurrentMapZone())
-    if not currentZone then return pois end
+    if not currentZone then return {} end
 
     local pX, pY = GetPlayerMapPosition("player")
     pX, pY = pX * 100, pY * 100
 
     -- Не можем построить маршрут, если нет координат игрока (инст/отсутствие карты)
-    if pX == 0 and pY == 0 then return pois end
+    if pX == 0 and pY == 0 then return {} end
+
+    local plevel = UnitLevel("player")
+    local _, race = UnitRace("player")
+    local prace = pfDatabase:GetBitByRace(race)
+    local _, class = UnitClass("player")
+    local pclass = pfDatabase:GetBitByClass(class)
+
+    local function addBestPOI(poi)
+        if poi.zone ~= currentZone then return end
+        poi.score = self:ScorePOI(poi, pX, pY)
+        local key = tostring(poi.questid) .. "_" .. tostring(poi.action) .. "_" .. tostring(poi.targetName)
+
+        local existing = bestPois[key]
+        if not existing or poi.score < existing.score then
+            bestPois[key] = poi
+        end
+    end
 
     for questid, data in pairs(pfQuest.questlog) do
         local state = self:GetQuestState(questid)
         if state ~= self.STATE.UNAVAILABLE then
             local questPOIs = self:GetQuestPOIs(questid, state)
             for _, poi in ipairs(questPOIs) do
-                -- Оставляем только те, что в нашей локации
-                if poi.zone == currentZone then
+                poi.questid = questid
+                poi.state = state
+                poi.questTitle = data.title
+                addBestPOI(poi)
+            end
+        end
+    end
+
+    for questid in pairs(pfDB.quests.data) do
+        if not pfQuest.questlog[questid] and pfDatabase:QuestFilter(questid, plevel, pclass, prace) then
+            local questPOIs = self:GetQuestPOIs(questid, self.STATE.AVAILABLE)
+            if next(questPOIs) then
+                local quest = pfDB.quests.data[questid]
+                local title = quest.title or "Unknown"
+                for _, poi in ipairs(questPOIs) do
                     poi.questid = questid
-                    poi.state = state
-                    poi.questTitle = data.title
-                    poi.score = self:ScorePOI(poi, pX, pY)
-                    table.insert(pois, poi)
+                    poi.state = self.STATE.AVAILABLE
+                    poi.questTitle = title
+                    addBestPOI(poi)
                 end
             end
         end
     end
 
-    -- Сортируем от самого низкого (лучшего) к самому высокому (худшему) score
+    local pois = {}
+    for _, poi in pairs(bestPois) do
+        table.insert(pois, poi)
+    end
+
     table.sort(pois, function(a, b)
         return a.score < b.score
     end)
