@@ -289,11 +289,21 @@ end
 
 function pfGuide:ScorePOI(poi, playerX, playerY)
     local score = math.sqrt((playerX - poi.x)^2 + (playerY - poi.y)^2)
-    -- Бонусы за приоритет действий (вычитаем из дистанции)
+
+    -- Бонусы за приоритет действий (вычитаем из виртуальной дистанции)
     if poi.action == "TurnIn" then
         score = score - 30
     elseif poi.action == "Accept" then
         score = score - 15
+
+        -- Умный приоритет: если квест открывает цепочку, поднимаем его ценность
+        if poi.questid and poi.questid > 0 then
+            local qData = pfDB.quests.data[poi.questid]
+            if qData and qData.chain and table.getn(qData.chain) > 0 then
+                -- Уменьшаем score (делаем точку привлекательнее одиночных квестов)
+                score = score - 12
+            end
+        end
     end
     return score
 end
@@ -489,21 +499,6 @@ local function CreateQuestButton(i)
     btn.info:SetJustifyH("LEFT")
     btn.info:SetText("X: -- Y: -- Dist: -- m")
 
-    btn.track = CreateFrame("Button", nil, btn)
-    btn.track:SetPoint("TOPRIGHT", btn, "TOPRIGHT", -8, -8)
-    btn.track:SetWidth(70)
-    btn.track:SetHeight(25)
-    btn.track:SetText("Track")
-    btn.track.bg = btn.track:CreateTexture(nil, "BACKGROUND")
-    btn.track.bg:SetAllPoints(btn.track)
-    btn.track.bg:SetTexture(0.2, 0.6, 0.2, 0.6)
-
-    btn.track:SetScript("OnClick", function()
-        if btn.poi then
-            pfGuide:PointToQuest(btn.poi)
-        end
-    end)
-
     btn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
     btn:SetScript("OnClick", function(self, button)
         if button == "RightButton" and self.poi then
@@ -565,7 +560,7 @@ function pfGuide:RefreshWindow()
         pX, pY = pX * 100, pY * 100
         local dist = math.sqrt((pX - poi.x)^2 + (pY - poi.y)^2)
 
-        btn.info:SetText(string.format("К: %s | X: %.1f Y: %.1f | Dist: %.1f", poi.targetName, poi.x, poi.y, dist))
+        btn.info:SetText(string.format("К: %s | Dist: %.1f", poi.targetName, dist))
         btn:Show()
 
         btnIndex = btnIndex + 1
