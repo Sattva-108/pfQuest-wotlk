@@ -20,6 +20,84 @@ pfGuide.STATE = {
     ACTIVE_COMPLETE = "ACTIVE_COMPLETE"
 }
 
+-- Вспомогательная функция поиска ближайшего распорядителя полетов вашей фракции в текущей зоне
+local function GetClosestFlightMaster(currentZone, pX, pY)
+    local faction = UnitFactionGroup("player")
+    local factionCode = (faction == "Horde") and "H" or "A"
+    local bestFM = nil
+    local bestScore = math.huge
+
+    if pfDB.meta and pfDB.meta.flight then
+        for npcId, fac in pairs(pfDB.meta.flight) do
+            if string.find(fac, factionCode) or fac == "AH" then
+                local unit = pfDB.units.data[npcId]
+                if unit and unit.coords then
+                    for _, coord in ipairs(unit.coords) do
+                        if coord[3] == currentZone then
+                            local dist = math.sqrt((pX - coord[1])^2 + (pY - coord[2])^2)
+                            if dist < bestScore then
+                                bestScore = dist
+                                bestFM = { x = coord[1], y = coord[2], name = pfDB.units.loc[npcId] or "Flight Master" }
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return bestFM
+end
+
+-- Метод поиска лучшей зоны для перехода на основе доступных по уровню квестов
+function pfGuide:GetNextZoneSuggestion(plevel, pclass, prace)
+    local zoneCounts = {}
+    if not pfDB.quests or not pfDB.quests.data then return nil, 0 end
+
+    for questid, quest in pairs(pfDB.quests.data) do
+        if not pfQuest_config.guideBlacklist[questid] and not pfQuest.questlog[questid] then
+            if pfDatabase:QuestFilter(questid, plevel, pclass, prace) then
+                local start_zones = {}
+                if quest.start then
+                    if quest.start.U then
+                        for _, unit in pairs(quest.start.U) do
+                            local uData = pfDB.units.data[unit]
+                            if uData and uData.coords then
+                                for _, coord in pairs(uData.coords) do
+                                    start_zones[coord[3]] = true
+                                end
+                            end
+                        end
+                    end
+                    if quest.start.O then
+                        for _, object in pairs(quest.start.O) do
+                            local oData = pfDB.objects.data[object]
+                            if oData and oData.coords then
+                                for _, coord in pairs(oData.coords) do
+                                    start_zones[coord[3]] = true
+                                end
+                            end
+                        end
+                    end
+                end
+                for zoneId in pairs(start_zones) do
+                    zoneCounts[zoneId] = (zoneCounts[zoneId] or 0) + 1
+                end
+            end
+        end
+    end
+
+    local bestZoneId = nil
+    local maxQuests = 0
+    for zoneId, count in pairs(zoneCounts) do
+        -- Игнорируем некорректные зоны (например, 0 или системные)
+        if zoneId > 0 and count > maxQuests then
+            maxQuests = count
+            bestZoneId = zoneId
+        end
+    end
+    return bestZoneId, maxQuests
+end
+
 -- ============================================================================
 -- ЛОГИКА СОСТОЯНИЙ И ПОЛУЧЕНИЯ ТОЧЕК (POIs)
 -- ============================================================================
@@ -300,6 +378,34 @@ function pfGuide:GetActivePOIs()
         return a.score < b.score
     end)
 
+    -- МЕЖЗОНАЛЬНАЯ НАВИГАЦИЯ (FALLBACK)
+    -- Если в текущей локации не осталось целей, ищем следующую подходящую зону
+    if #pois == 0 then
+        local nextZoneId, questCount = self:GetNextZoneSuggestion(plevel, pclass, prace)
+        if nextZoneId and questCount > 0 then
+            local nextZoneName = pfMap:GetMapNameByID(nextZoneId) or ("Zone " .. nextZoneId)
+            local targetName = "Walk or Use Hearthstone"
+
+            -- Пытаемся найти полетчика в текущей локации для навигации
+            local fm = GetClosestFlightMaster(currentZone, pX, pY)
+            if fm then
+                targetName = "Flight Master: " .. fm.name
+            end
+
+            table.insert(pois, {
+                x = fm and fm.x or 50,
+                y = fm and fm.y or 50,
+                zone = fm and currentZone or nextZoneId,
+                action = "Accept",
+                targetName = targetName,
+                questid = 0,
+                questTitle = "Proceed to " .. nextZoneName .. " (" .. questCount .. " quests available)",
+                isTransition = true,
+                fmFound = fm ~= nil
+            })
+        end
+    end
+
     return pois
 end
 
@@ -480,6 +586,16 @@ end
 
 function pfGuide:PointToQuest(poi)
     if not poi or not poi.x or not poi.y then return end
+
+    -- Если это переход в другую локацию и полетчик в текущей зоне не найден,
+    -- скрываем стрелку, чтобы не дезориентировать игрока (оставляем только текст в окне)
+    if poi.isTransition and not poi.fmFound then
+        self.RouteReset(pfQuest.route)
+        if pfQuest.route.arrow then
+            pfQuest.route.arrow:Hide()
+        end
+        return
+    end
 
     local node = {
         [1] = poi.x,
