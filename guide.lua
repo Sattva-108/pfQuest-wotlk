@@ -58,6 +58,171 @@ function pfGuide:GetQuestState(questid)
     return self.STATE.ACTIVE_COMPLETE
 end
 
+function pfGuide:GetQuestPOIs(questid, state)
+    local quest = pfDB.quests.data[questid]
+    if not quest then return {} end
+
+    local pois = {}
+    local seen = {}
+
+    local function addPOI(x, y, zone, action, targetName)
+        if not x or not y or not zone or zone <= 0 then return end
+        local title = targetName or "Unknown"
+        local key = tostring(zone) .. ":" .. tostring(x) .. ":" .. tostring(y) .. ":" .. tostring(action) .. ":" .. tostring(title)
+        if seen[key] then return end
+        seen[key] = true
+        table.insert(pois, { x = x, y = y, zone = zone, action = action, targetName = title })
+    end
+
+    local function addUnitPOIs(unit, action)
+        if not pfDB.units.data[unit] or not pfDB.units.data[unit].coords then return end
+        local name = pfDB.units.loc[unit] or "Unknown"
+        for _, coord in pairs(pfDB.units.data[unit].coords) do
+            local x, y, zone = unpack(coord)
+            addPOI(x, y, zone, action, name)
+        end
+    end
+
+    local function addObjectPOIs(object, action)
+        if not pfDB.objects.data[object] or not pfDB.objects.data[object].coords then return end
+        local name = pfDB.objects.loc[object] or "Unknown"
+        for _, coord in pairs(pfDB.objects.data[object].coords) do
+            local x, y, zone = unpack(coord)
+            addPOI(x, y, zone, action, name)
+        end
+    end
+
+    local function addItemPOIs(item, action)
+        if not pfDB.items.data[item] then return end
+        local title = pfDB.items.loc[item] or "Unknown"
+
+        if pfDB.items.data[item]["U"] then
+            for unit in pairs(pfDB.items.data[item]["U"]) do
+                addUnitPOIs(unit, action .. " (drop for " .. title .. ")")
+            end
+        end
+
+        if pfDB.items.data[item]["O"] then
+            for object in pairs(pfDB.items.data[item]["O"]) do
+                addObjectPOIs(object, action .. " (drop for " .. title .. ")")
+            end
+        end
+
+        if pfDB.items.data[item]["R"] then
+            for ref in pairs(pfDB.items.data[item]["R"]) do
+                if refloot[ref] then
+                    if refloot[ref]["U"] then
+                        for unit in pairs(refloot[ref]["U"]) do
+                            addUnitPOIs(unit, action .. " (drop for " .. title .. ")")
+                        end
+                    end
+                    if refloot[ref]["O"] then
+                        for object in pairs(refloot[ref]["O"]) do
+                            addObjectPOIs(object, action .. " (drop for " .. title .. ")")
+                        end
+                    end
+                end
+            end
+        end
+
+        if pfDB.items.data[item]["V"] then
+            for unit in pairs(pfDB.items.data[item]["V"]) do
+                addUnitPOIs(unit, action .. " (vendor for " .. title .. ")")
+            end
+        end
+    end
+
+    local parse_obj = {
+        ["U"] = {},
+        ["O"] = {},
+        ["I"] = {},
+    }
+
+    if state == self.STATE.ACTIVE_INCOMPLETE then
+        local data = pfQuest.questlog[questid]
+        if data and data.qlogid then
+            local objectives = GetNumQuestLeaderBoards(data.qlogid) or 0
+            for i = 1, objectives do
+                local text, type, done = GetQuestLogLeaderBoard(i, data.qlogid)
+
+                if type == "monster" then
+                    local _, _, monsterName, objNum, objNeeded = strfind(text, pfUI.api.SanitizePattern(QUEST_MONSTERS_KILLED))
+                    for id in pairs(pfDatabase:GetIDByName(monsterName, "units")) do
+                        parse_obj["U"][id] = (objNum + 0 >= objNeeded + 0 or done) and "DONE" or "PROG"
+                    end
+                    for id in pairs(pfDatabase:GetIDByName(monsterName, "objects")) do
+                        parse_obj["O"][id] = (objNum + 0 >= objNeeded + 0 or done) and "DONE" or "PROG"
+                    end
+                elseif type == "item" then
+                    local _, _, itemName, objNum, objNeeded = strfind(text, pfUI.api.SanitizePattern(QUEST_OBJECTS_FOUND))
+                    for id in pairs(pfDatabase:GetIDByName(itemName, "items")) do
+                        parse_obj["I"][id] = (objNum + 0 >= objNeeded + 0 or done) and "DONE" or "PROG"
+                    end
+                end
+            end
+        end
+    end
+
+    if state == self.STATE.AVAILABLE then
+        if quest["start"] then
+            if quest["start"]["U"] then
+                for _, unit in pairs(quest["start"]["U"]) do
+                    addUnitPOIs(unit, "Accept")
+                end
+            end
+            if quest["start"]["O"] then
+                for _, object in pairs(quest["start"]["O"]) do
+                    addObjectPOIs(object, "Accept")
+                end
+            end
+        end
+    elseif state == self.STATE.ACTIVE_COMPLETE then
+        if quest["end"] then
+            if quest["end"]["U"] then
+                for _, unit in pairs(quest["end"]["U"]) do
+                    addUnitPOIs(unit, "TurnIn")
+                end
+            end
+            if quest["end"]["O"] then
+                for _, object in pairs(quest["end"]["O"]) do
+                    addObjectPOIs(object, "TurnIn")
+                end
+            end
+            if quest["end"]["I"] then
+                for _, item in pairs(quest["end"]["I"]) do
+                    addItemPOIs(item, "TurnIn")
+                end
+            end
+        end
+    elseif state == self.STATE.ACTIVE_INCOMPLETE then
+        if quest["obj"] then
+            if quest["obj"]["U"] then
+                for _, unit in pairs(quest["obj"]["U"]) do
+                    if not parse_obj["U"][unit] or parse_obj["U"][unit] ~= "DONE" then
+                        addUnitPOIs(unit, "Objective")
+                    end
+                end
+            end
+            if quest["obj"]["O"] then
+                for _, object in pairs(quest["obj"]["O"]) do
+                    if not parse_obj["O"][object] or parse_obj["O"][object] ~= "DONE" then
+                        addObjectPOIs(object, "Objective")
+                    end
+                end
+            end
+            if quest["obj"]["I"] then
+                for _, item in pairs(quest["obj"]["I"]) do
+                    if not parse_obj["I"][item] or parse_obj["I"][item] ~= "DONE" then
+                        addItemPOIs(item, "Objective")
+                    end
+                end
+            end
+        end
+    end
+
+    return pois
+end
+
 function pfGuide:IsQuestTurnInReady(qlogid)
     local objectives = GetNumQuestLeaderBoards(qlogid) or 0
     if objectives == 0 then
