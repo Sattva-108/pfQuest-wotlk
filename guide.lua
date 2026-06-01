@@ -20,6 +20,12 @@ pfGuide.STATE = {
     ACTIVE_COMPLETE = "ACTIVE_COMPLETE"
 }
 
+pfGuide.poiCacheDuration = 2
+pfGuide.lastPoisUpdate = 0
+pfGuide.cachedPois = nil
+pfGuide.needsFullRefresh = false
+pfGuide.refreshTimer = nil
+
 -- Вспомогательная функция поиска ближайшего распорядителя полетов вашей фракции в текущей зоне
 local function GetClosestFlightMaster(currentZone, pX, pY)
     local faction = UnitFactionGroup("player")
@@ -325,8 +331,13 @@ function pfGuide:ScorePOI(poi, playerX, playerY)
     return score
 end
 
-function pfGuide:GetActivePOIs()
+function pfGuide:GetActivePOIs(forceRefresh)
     pfQuest_config.guideBlacklist = pfQuest_config.guideBlacklist or {}
+
+    local now = GetTime()
+    if not forceRefresh and self.cachedPois and (now - self.lastPoisUpdate) < self.poiCacheDuration then
+        return self.cachedPois
+    end
 
     local bestPois = {}
     local currentZone = pfMap:GetMapID(GetCurrentMapContinent(), GetCurrentMapZone())
@@ -433,6 +444,8 @@ function pfGuide:GetActivePOIs()
         end
     end
 
+    self.cachedPois = pois
+    self.lastPoisUpdate = GetTime()
     return pois
 end
 
@@ -549,7 +562,7 @@ end
 -- ============================================================================
 
 function pfGuide:RefreshWindow()
-    local pois = self:GetActivePOIs()
+    local pois = self:GetActivePOIs(true)
     local btnIndex = 1
 
     -- Показываем не более 20 целей (чтобы не перегружать интерфейс)
@@ -596,6 +609,19 @@ function pfGuide:RefreshWindow()
     pfGuideWindow.list:SetHeight((btnIndex - 1) * 45 + 10)
 end
 
+function pfGuide:UpdateWindowDistances()
+    local pX, pY = GetPlayerMapPosition("player")
+    pX, pY = pX * 100, pY * 100
+    if pX == 0 and pY == 0 then return end
+
+    for _, btn in ipairs(pfGuideWindow.buttons) do
+        if btn.poi and btn:IsShown() then
+            local dist = math.sqrt((pX - btn.poi.x)^2 + (pY - btn.poi.y)^2)
+            btn.info:SetText(string.format("К: %s | Dist: %.1f", btn.poi.targetName, dist))
+        end
+    end
+end
+
 function pfGuide:PointToQuest(poi)
     if not poi or not poi.x or not poi.y then return end
 
@@ -627,14 +653,20 @@ function pfGuide:PointToQuest(poi)
     end
 end
 
-function pfGuide:UpdateArrow()
-    local pois = self:GetActivePOIs()
+function pfGuide:UpdateArrow(forceRefresh)
+    local pois = self.cachedPois
+    if not pois or forceRefresh then
+        pois = self:GetActivePOIs(forceRefresh)
+    end
+
     if pois[1] then
-        self:PointToQuest(pois[1])
-        -- Запоминаем ключ активной цели
-        pfGuide.activeTargetKey = tostring(pois[1].questid) .. "_" .. tostring(pois[1].action) .. "_" .. tostring(pois[1].targetName)
+        local poiKey = tostring(pois[1].questid) .. "_" .. tostring(pois[1].action) .. "_" .. tostring(pois[1].targetName)
+        if poiKey ~= self.activeTargetKey or not (pfQuest.route.arrow and pfQuest.route.arrow:IsShown()) then
+            self:PointToQuest(pois[1])
+        end
+        self.activeTargetKey = poiKey
     else
-        pfGuide.activeTargetKey = nil
+        self.activeTargetKey = nil
     end
 end
 
@@ -665,19 +697,25 @@ pfGuide:RegisterEvent("QUEST_WATCH_UPDATE")
 pfGuide:RegisterEvent("BAG_UPDATE") -- важно для квестов на лут
 pfGuide:SetScript("OnEvent", function()
     if pfGuideWindow:IsShown() then
-        pfGuide.timer = GetTime() + 0.5
+        pfGuide.needsFullRefresh = true
+        pfGuide.refreshTimer = GetTime() + 0.5
     end
 end)
 
 pfGuide:SetScript("OnUpdate", function()
     if pfGuideWindow:IsShown() then
-        if this.timer and GetTime() > this.timer then
-            this.timer = nil
-            pfGuide:RefreshWindow()
-            pfGuide:UpdateArrow() -- Обновляем стрелку, если что-то сдали/выполнили
-        elseif not this.timer then
-            -- Тик обновления дистанции раз в 2 секунды
-            this.timer = GetTime() + 2
+        if this.refreshTimer and GetTime() > this.refreshTimer then
+            this.refreshTimer = nil
+            if pfGuide.needsFullRefresh then
+                pfGuide:RefreshWindow()
+                pfGuide.needsFullRefresh = false
+            else
+                pfGuide:UpdateWindowDistances()
+            end
+            pfGuide:UpdateArrow()
+        elseif not this.refreshTimer then
+            -- В фоне обновляем только расстояния и стрелку каждые 2 секунды
+            this.refreshTimer = GetTime() + 2
         end
     end
 end)
