@@ -33,4 +33,5 @@ init\ptBR-tbc.xml
 debug.lua
 pfquest_debug_browser.lua
 init\addon.xml
+xp-per-level.lua
 guide.lua
