@@ -201,6 +201,7 @@ pfQuest:SetScript("OnUpdate", function()
         then
           local meta = { ["addon"] = "PFQUEST", ["qlogid"] = entry[3] }
           pfDatabase:SearchQuestID(entry[2], meta)
+          pfMap:UpdateNodes()
         end
       end
     end

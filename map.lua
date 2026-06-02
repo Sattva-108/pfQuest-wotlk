@@ -916,8 +916,16 @@ end
 
 function pfMap:AddNode(meta)
     if not meta then return end
+    local isItemQuest = meta and (meta["QTYPE"] == "ITEM_START" or meta["QTYPE"] == "ITEM_OBJECTIVE_LOOT" or meta["QTYPE"] == "ITEM_OBJECTIVE_USE")
+    local debugTarget = isItemQuest and (meta["questid"] == 897 or meta["itemid"] == 5138)
+    if debugTarget and not meta["zone"] then print("AddNode: failed to add target item quest node - missing zone, questid=" .. tostring(meta["questid"]) .. ", itemid=" .. tostring(meta["itemid"]) .. ", item=" .. tostring(meta["item"])) end
+    if debugTarget and not meta["title"] then print("AddNode: failed to add target item quest node - missing title, questid=" .. tostring(meta["questid"]) .. ", itemid=" .. tostring(meta["itemid"]) .. ", item=" .. tostring(meta["item"])) end
     if not meta["zone"] then return end
     if not meta["title"] then return end
+
+    if debugTarget then
+        print("AddNode: target item quest node attempt questid=" .. tostring(meta["questid"]) .. ", quest=" .. tostring(meta["quest"]) .. ", QTYPE=" .. tostring(meta["QTYPE"]) .. ", spawn=" .. tostring(meta["spawn"]) .. ", itemid=" .. tostring(meta["itemid"]) .. ", item=" .. tostring(meta["item"]))
+    end
 
     meta["description"] = pfDatabase:BuildQuestDescription(meta)
 
@@ -1001,6 +1009,9 @@ function pfMap:AddNode(meta)
     end
 
     pfMap.queue_update = GetTime()
+    if debugTarget then
+        print("AddNode: target item quest node added successfully, questid=" .. tostring(meta["questid"]) .. ", quest=" .. tostring(meta["quest"]) .. ", itemid=" .. tostring(meta["itemid"]) .. ", item=" .. tostring(meta["item"]) .. ", zone=" .. tostring(meta["zone"]))
+    end
 end
 
 function pfMap:GetNodes(addon, title)

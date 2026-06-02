@@ -898,7 +898,10 @@ end
 -- Adds map nodes for each drop and vendor
 -- Returns its map table
 function pfDatabase:SearchItemID(id, meta, maps, allowedTypes)
-  if not items[id] then return maps end
+  if not items[id] then
+    if id == 5138 then print("SearchItemID: item 5138 not found in items db") end
+    return maps
+  end
 
   local maps = maps or {}
   local meta = meta or {}
@@ -908,6 +911,41 @@ function pfDatabase:SearchItemID(id, meta, maps, allowedTypes)
 
   local minChance = tonumber(pfQuest_config.mindropchance)
   if not minChance then minChance = 0 end
+
+  local debugTarget = id == 5138
+  if debugTarget then
+    local ucount, ocount, rcount, vcount = 0, 0, 0, 0
+    if items[id]["U"] then for _ in pairs(items[id]["U"]) do ucount = ucount + 1 end end
+    if items[id]["O"] then for _ in pairs(items[id]["O"]) do ocount = ocount + 1 end end
+    if items[id]["R"] then for _ in pairs(items[id]["R"]) do rcount = rcount + 1 end end
+    if items[id]["V"] then for _ in pairs(items[id]["V"]) do vcount = vcount + 1 end end
+    print("SearchItemID: item 5138 source counts U=" .. ucount .. ", O=" .. ocount .. ", R=" .. rcount .. ", V=" .. vcount .. ", minChance=" .. tostring(minChance) .. ", meta.questid=" .. tostring(meta["questid"]))
+  end
+
+  -- Check if this item is used as a quest starter (if not already in quest context)
+  if not meta["questid"] then
+    local foundQuests = {}
+    for qid, quest in pairs(quests) do
+      if quest["start"] and quest["start"]["I"] then
+        for _, itemId in ipairs(quest["start"]["I"]) do
+          if itemId == id then
+            table.insert(foundQuests, qid)
+            if debugTarget then print("SearchItemID: item 5138 is a starter for quest " .. qid) end
+            break
+          end
+        end
+      end
+    end
+    
+    -- If item is a quest starter, mark it with quest info for display
+    if #foundQuests > 0 then
+      local qid = foundQuests[1]
+      meta["questid"] = qid
+      meta["QTYPE"] = "ITEM_START"
+      meta["quest"] = pfDB.quests.loc[qid] and pfDB.quests.loc[qid].T or ("Quest " .. qid)
+      if debugTarget then print("SearchItemID: marked item 5138 as quest starter for quest " .. qid) end
+    end
+  end
 
   -- search unit drops
   if items[id]["U"] and ((not allowedTypes) or allowedTypes["U"]) then
@@ -988,6 +1026,50 @@ function pfDatabase:SearchItem(item, meta, partial)
   return maps
 end
 
+function pfDatabase:AddQuestStarters(id, meta, maps)
+  if not quests[id] or not quests[id]["start"] then return maps end
+  local maps = maps or {}
+  local meta = meta or {}
+
+  if not meta["qlogid"] then
+    if quests[id]["start"]["U"] then
+      for _, unit in pairs(quests[id]["start"]["U"]) do
+        local current_meta = {}
+        for key, value in pairs(meta) do current_meta[key] = value end
+        current_meta["QTYPE"] = "NPC_START"
+        current_meta["layer"] = current_meta["layer"] or 4
+        current_meta["texture"] = pfQuestConfig.path.."\\img\\available_c"
+        maps = pfDatabase:SearchMobID(unit, current_meta, maps, 0)
+      end
+    end
+
+    if quests[id]["start"]["O"] then
+      for _, object in pairs(quests[id]["start"]["O"]) do
+        local current_meta = {}
+        for key, value in pairs(meta) do current_meta[key] = value end
+        current_meta["QTYPE"] = "OBJECT_START"
+        current_meta["texture"] = pfQuestConfig.path.."\\img\\available_c"
+        maps = pfDatabase:SearchObjectID(object, current_meta, maps, 0)
+      end
+    end
+  end
+
+  if quests[id]["start"]["I"] then
+    if id == 897 then print("AddQuestStarters: quest 897 has start items: " .. table.concat(quests[id]["start"]["I"], ", ")) end
+    for _, itemid in ipairs(quests[id]["start"]["I"]) do
+      if itemid == 5138 then print("AddQuestStarters: quest 897 processing start item 5138") end
+      local current_meta = {}
+      for key, value in pairs(meta) do current_meta[key] = value end
+      current_meta["QTYPE"] = "ITEM_START"
+      current_meta["texture"] = nil
+      current_meta["layer"] = 2
+      maps = pfDatabase:SearchItemID(itemid, current_meta, maps)
+    end
+  end
+
+  return maps
+end
+
 -- SearchVendor
 -- Scans for all items with a specified name
 -- Adds map nodes for each vendor
@@ -1036,29 +1118,8 @@ function pfDatabase:SearchQuestID(id, meta, maps)
   end
 
   if pfQuest_config["currentquestgivers"] == "1" then
-    -- search quest-starter
-    if quests[id]["start"] and not meta["qlogid"] then
-      -- units
-      if quests[id]["start"]["U"] then
-        for _, unit in pairs(quests[id]["start"]["U"]) do
-          meta = meta or {}
-          meta["QTYPE"] = "NPC_START"
-          meta["layer"] = meta["layer"] or 4
-          meta["texture"] = pfQuestConfig.path.."\\img\\available_c"
-          maps = pfDatabase:SearchMobID(unit, meta, maps, 0)
-        end
-      end
-
-      -- objects
-      if quests[id]["start"]["O"] then
-        for _, object in pairs(quests[id]["start"]["O"]) do
-          meta = meta or {}
-          meta["QTYPE"] = "OBJECT_START"
-          meta["texture"] = pfQuestConfig.path.."\\img\\available_c"
-          maps = pfDatabase:SearchObjectID(object, meta, maps, 0)
-        end
-      end
-    end
+    if id == 897 then print("SearchQuestID: quest 897 currentquestgivers enabled, processing starters") end
+    maps = pfDatabase:AddQuestStarters(id, meta, maps)
 
     -- search quest-ender
     if quests[id]["end"] then
@@ -1296,6 +1357,38 @@ function pfDatabase:SearchQuestID(id, meta, maps)
     end
   end
 
+  return maps
+end
+
+function pfDatabase:DebugQuestStart(id)
+  print("DebugQuestStart: questid=" .. tostring(id))
+  if not quests[id] then
+    print("DebugQuestStart: quest not found")
+    return
+  end
+
+  if not quests[id]["start"] then
+    print("DebugQuestStart: quest has no start data")
+  else
+    if quests[id]["start"]["U"] then
+      print("DebugQuestStart: start units=" .. table.concat(quests[id]["start"]["U"], ", "))
+    end
+    if quests[id]["start"]["O"] then
+      print("DebugQuestStart: start objects=" .. table.concat(quests[id]["start"]["O"], ", "))
+    end
+    if quests[id]["start"]["I"] then
+      print("DebugQuestStart: start items=" .. table.concat(quests[id]["start"]["I"], ", "))
+    end
+  end
+
+  local maps = {}
+  local meta = { ["addon"] = "PFDB" }
+  maps = pfDatabase:SearchQuestID(id, meta, maps)
+
+  local count = 0
+  for _,_ in pairs(maps or {}) do count = count + 1 end
+  local bestmap, bestscore = pfDatabase:GetBestMap(maps)
+  print("DebugQuestStart: SearchQuestID returned maps_count=" .. tostring(count) .. ", bestmap=" .. tostring(bestmap) .. ", bestscore=" .. tostring(bestscore))
   return maps
 end
 
