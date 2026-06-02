@@ -1,5 +1,5 @@
 @echo off
-:: Проверяем что мы в правильной директории
+:: Check if we are in the correct directory
 if not exist "output\" (
     echo ERROR: output folder not found!
     echo Please run this script from the toolbox folder
@@ -13,13 +13,13 @@ if not exist "..\db\" (
     exit /b 1
 )
 
-:: Создаем резервную копию старых файлов в корне db
+:: Create a backup of old files in the db root
 if exist "..\db\*.lua" (
     if not exist "..\db\backup\" mkdir "..\db\backup"
     copy "..\db\*.lua" "..\db\backup\" >nul 2>&1
 )
 
-:: Копируем основные файлы
+:: Copy main files
 copy /Y "output\*.lua" "..\db\" >nul
 if %errorlevel% neq 0 (
     echo ERROR: Failed to copy main files
@@ -27,20 +27,20 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-:: Динамически обрабатываем все папки с локализацией (enUS, ruRU и т.д.)
+:: Dynamically process all locale folders (enUS, ruRU, etc.)
 for /d %%L in ("output\*") do (
     echo Copying locale: %%~nxL
     
-    :: Создаем директорию локализации в db если ее нет
+    :: Create locale directory in db if it doesn't exist
     if not exist "..\db\%%~nxL\" mkdir "..\db\%%~nxL"
     
-    :: Создаем бекап
+    :: Create backup
     if exist "..\db\%%~nxL\*.lua" (
         if not exist "..\db\%%~nxL\backup\" mkdir "..\db\%%~nxL\backup"
         copy "..\db\%%~nxL\*.lua" "..\db\%%~nxL\backup\" >nul 2>&1
     )
     
-    :: Копируем файлы локализации
+    :: Copy locale files
     copy /Y "%%L\*.lua" "..\db\%%~nxL\" >nul
     if %errorlevel% neq 0 (
         echo ERROR: Failed to copy locale files for %%~nxL
@@ -49,7 +49,7 @@ for /d %%L in ("output\*") do (
     )
 )
 
-:: Не делаем pause если запущено автоматически
+:: Do not pause if running automatically
 if "%1"=="auto" goto :eof
 echo.
 echo ===============================================

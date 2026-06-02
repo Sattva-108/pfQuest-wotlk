@@ -3412,16 +3412,31 @@ end
         pfDB["quests"][data][entry]["class"] = allowable_classes_mask
       end
 
-      -- Zone-based faction detection for AllowableRaces = 0
+      -- Универсальное определение фракции для квестов с AllowableRaces = 0
       local final_race = allowable_races_mask ~= 0 and allowable_races_mask or race
-      if final_race == 0 and quest_starters_creature[tonumber(quest_id)] then
-        -- Get zone from first starter creature
-        local starter_id = quest_starters_creature[tonumber(quest_id)][1]
-        if starter_id and pfDB["units"][data][starter_id] and pfDB["units"][data][starter_id]["coords"] then
-          local coords = pfDB["units"][data][starter_id]["coords"][1]
-          if coords then
-            local zone = coords[3]
-            -- Zone-to-faction mapping for common zones
+      if final_race == 0 then
+        local check_npc_id = nil
+
+        -- Сначала пытаемся взять стартового NPC
+        if quest_starters_creature[tonumber(quest_id)] then
+          check_npc_id = quest_starters_creature[tonumber(quest_id)][1]
+          -- Если квест с предмета, берем финального NPC (кому сдавать)
+        elseif quest_enders_creature[tonumber(quest_id)] then
+          check_npc_id = quest_enders_creature[tonumber(quest_id)][1]
+        end
+
+        if check_npc_id and pfDB["units"][data][check_npc_id] then
+          local npc_data = pfDB["units"][data][check_npc_id]
+
+          -- 1. Сначала проверяем фракцию самого NPC (самый точный и универсальный метод для ЛЮБОЙ зоны)
+          if npc_data.fac == "A" then
+            final_race = 1101 -- Alliance
+          elseif npc_data.fac == "H" then
+            final_race = 690  -- Horde
+
+            -- 2. Если фракция NPC не прописана явно, оставляем старый fallback по стартовым зонам на всякий случай
+          elseif npc_data.coords and npc_data.coords[1] then
+            local zone = npc_data.coords[1][3]
             if zone == 215 or zone == 17 or zone == 14 then -- Mulgore, Northern Barrens, Durotar
               final_race = 690 -- Horde
             elseif zone == 12 or zone == 40 or zone == 130 then -- Elwynn Forest, Westfall, Teldrassil
