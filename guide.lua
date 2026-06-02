@@ -25,6 +25,7 @@ pfGuide.lastPoisUpdate = 0
 pfGuide.cachedPois = nil
 pfGuide.needsFullRefresh = false
 pfGuide.refreshTimer = nil
+pfGuide.xpCache = {}
 
 -- Вспомогательная функция поиска ближайшего распорядителя полетов вашей фракции в текущей зоне
 local function GetClosestFlightMaster(currentZone, pX, pY)
@@ -56,13 +57,15 @@ end
 
 -- Метод поиска лучшей зоны для перехода на основе доступных по уровню квестов
 function pfGuide:GetNextZoneSuggestion(plevel, pclass, prace)
-    local zoneCounts = {}
+    local zoneScores = {}
     if not pfDB.quests or not pfDB.quests.data then return nil, 0 end
 
     for questid, quest in pairs(pfDB.quests.data) do
         if not pfQuest_config.guideBlacklist[questid] and not pfQuest.questlog[questid] then
             if pfDatabase:QuestFilter(questid, plevel, pclass, prace) then
+                local xp = pfGuide:GetQuestXP(questid)
                 local start_zones = {}
+
                 if quest.start then
                     if quest.start.U then
                         for _, unit in pairs(quest.start.U) do
@@ -85,23 +88,32 @@ function pfGuide:GetNextZoneSuggestion(plevel, pclass, prace)
                         end
                     end
                 end
+
                 for zoneId in pairs(start_zones) do
-                    zoneCounts[zoneId] = (zoneCounts[zoneId] or 0) + 1
+                    if not zoneScores[zoneId] then
+                        zoneScores[zoneId] = { count = 0, totalXP = 0 }
+                    end
+                    zoneScores[zoneId].count = zoneScores[zoneId].count + 1
+                    zoneScores[zoneId].totalXP = zoneScores[zoneId].totalXP + xp
                 end
             end
         end
     end
 
     local bestZoneId = nil
-    local maxQuests = 0
-    for zoneId, count in pairs(zoneCounts) do
-        -- Игнорируем некорректные зоны (например, 0 или системные)
-        if zoneId > 0 and count > maxQuests then
-            maxQuests = count
-            bestZoneId = zoneId
+    local bestScore = -1
+
+    for zoneId, data in pairs(zoneScores) do
+        if zoneId > 0 then
+            local score = data.totalXP * 0.7 + data.count * 15
+            if score > bestScore then
+                bestScore = score
+                bestZoneId = zoneId
+            end
         end
     end
-    return bestZoneId, maxQuests
+
+    return bestZoneId, bestScore
 end
 
 -- ============================================================================
@@ -128,6 +140,27 @@ function pfGuide:GetQuestState(questid)
     end
 
     return self.STATE.ACTIVE_COMPLETE
+end
+
+function pfGuide:GetQuestXP(questid)
+    if self.xpCache[questid] then
+        return self.xpCache[questid]
+    end
+
+    local questData = pfDB.quests.data[questid]
+    if not questData then
+        self.xpCache[questid] = 0
+        return 0
+    end
+
+    local xp = pfMap:GetQuestXP(questData)
+    self.xpCache[questid] = xp
+    return xp
+end
+
+function pfGuide:EnrichPOIWithXP(poi, questid)
+    if not questid or questid == 0 then return end
+    poi.xpReward = self:GetQuestXP(questid)
 end
 
 function pfGuide:GetQuestPOIs(questid, state)
@@ -294,40 +327,35 @@ function pfGuide:GetQuestPOIs(questid, state)
 end
 
 function pfGuide:ScorePOI(poi, playerX, playerY)
-    -- Считаем чистое расстояние
     local dist = math.sqrt((playerX - poi.x)^2 + (playerY - poi.y)^2)
+    local score = dist * dist  -- базовый штраф расстояния
 
-    -- Используем квадрат расстояния (штраф за дальность)
-    local score = dist * dist
-
-    -- Уникальный ключ для идентификации этой конкретной цели
-    local poiKey = tostring(poi.questid) .. "_" .. tostring(poi.action) .. "_" .. tostring(poi.targetName)
-
-    -- ЭФФЕКТ ИНЕРЦИИ (Липкая цель):
-    -- Если эта точка уже является нашей текущей целью, даем ей огромную скидку,
-    -- чтобы стрелка не дергалась на соседние объекты при движении
-    if pfGuide.activeTargetKey == poiKey then
-        score = score - 35
+    -- === XP EFFICIENCY ===
+    if poi.xpReward and poi.xpReward > 0 then
+        local xpPerDist = poi.xpReward / (dist + 30)
+        score = score - (poi.xpReward * 0.12)
+        score = score - (xpPerDist * 12)
     end
 
-    -- Бонусы за приоритет действий
+    -- Приоритеты действий
     if poi.action == "TurnIn" then
-        score = score - 20
+        score = score - 28
     elseif poi.action == "Accept" then
-        score = score - 10
+        score = score - 15
 
-        -- Умный приоритет цепочек
+        -- Бонус за начало цепочки
         if poi.questid and poi.questid > 0 then
             local qData = pfDB.quests.data[poi.questid]
-            if qData and qData.chain then
-                local chainCount = table.getn(qData.chain)
-                if chainCount > 0 then
-                    local chainBonus = 1 + math.min(chainCount * 0.3, 1)
-                    score = score - chainBonus
-                end
+            if qData and qData.chain and #qData.chain > 1 then
+                score = score - 8
             end
         end
     end
+
+    if poi.zone == pfMap:GetMapID(GetCurrentMapContinent(), GetCurrentMapZone()) then
+        score = score - 5
+    end
+
     return score
 end
 
@@ -377,6 +405,7 @@ function pfGuide:GetActivePOIs(forceRefresh)
                     poi.questid = questid
                     poi.state = state
                     poi.questTitle = data.title
+                    pfGuide:EnrichPOIWithXP(poi, questid)
                     addBestPOI(poi)
                 end
             end
@@ -398,6 +427,7 @@ function pfGuide:GetActivePOIs(forceRefresh)
                         poi.questid = questid
                         poi.state = self.STATE.AVAILABLE
                         poi.questTitle = title
+                        pfGuide:EnrichPOIWithXP(poi, questid)
                         addBestPOI(poi)
                     end
                 end
@@ -695,6 +725,9 @@ end
 pfGuide:RegisterEvent("QUEST_LOG_UPDATE")
 pfGuide:RegisterEvent("QUEST_WATCH_UPDATE")
 pfGuide:RegisterEvent("BAG_UPDATE") -- важно для квестов на лут
+pfGuide:RegisterEvent("ZONE_CHANGED")
+pfGuide:RegisterEvent("ZONE_CHANGED_NEW_AREA")
+pfGuide:RegisterEvent("MINIMAP_ZONE_CHANGED")
 pfGuide:SetScript("OnEvent", function()
     if pfGuideWindow:IsShown() then
         pfGuide.needsFullRefresh = true
