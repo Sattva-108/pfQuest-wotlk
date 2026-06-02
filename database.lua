@@ -1459,30 +1459,36 @@ function pfDatabase:SearchQuests(meta, maps)
               meta["itemid"] = item
               meta["item"] = pfDB.items.loc[item]
 
+              -- Ищем мобов
               if items[item]["U"] then
                 for unit, chance in pairs(items[item]["U"]) do
-                  if chance >= minChance and units[unit] and strfind(units[unit]["fac"] or pfaction, pfaction) then
+                  -- УБРАЛИ ПРОВЕРКУ ФРАКЦИИ (моб может быть враждебным)
+                  if chance >= minChance and units[unit] then
                     meta["QTYPE"] = "NPC_START"
                     maps = pfDatabase:SearchMobID(unit, meta, maps)
                   end
                 end
               end
 
+              -- Ищем объекты (сундуки)
               if items[item]["O"] then
                 for object, chance in pairs(items[item]["O"]) do
-                  if chance >= minChance and objects[object] and strfind(objects[object]["fac"] or pfaction, pfaction) then
+                  -- УБРАЛИ ПРОВЕРКУ ФРАКЦИИ
+                  if chance >= minChance and objects[object] then
                     meta["QTYPE"] = "OBJECT_START"
                     maps = pfDatabase:SearchObjectID(object, meta, maps)
                   end
                 end
               end
 
+              -- Ищем в общих таблицах (refloot)
               if items[item]["R"] then
                 for ref, chance in pairs(items[item]["R"]) do
                   if chance >= minChance and refloot[ref] then
                     if refloot[ref]["U"] then
                       for unit in pairs(refloot[ref]["U"]) do
-                        if units[unit] and strfind(units[unit]["fac"] or pfaction, pfaction) then
+                        -- УБРАЛИ ПРОВЕРКУ ФРАКЦИИ
+                        if units[unit] then
                           meta["QTYPE"] = "NPC_START"
                           maps = pfDatabase:SearchMobID(unit, meta, maps)
                         end
@@ -1491,7 +1497,8 @@ function pfDatabase:SearchQuests(meta, maps)
 
                     if refloot[ref]["O"] then
                       for object in pairs(refloot[ref]["O"]) do
-                        if objects[object] and strfind(objects[object]["fac"] or pfaction, pfaction) then
+                        -- УБРАЛИ ПРОВЕРКУ ФРАКЦИИ
+                        if objects[object] then
                           meta["QTYPE"] = "OBJECT_START"
                           maps = pfDatabase:SearchObjectID(object, meta, maps)
                         end
