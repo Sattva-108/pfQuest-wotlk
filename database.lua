@@ -1058,6 +1058,17 @@ function pfDatabase:SearchQuestID(id, meta, maps)
           maps = pfDatabase:SearchObjectID(object, meta, maps, 0)
         end
       end
+
+      -- items (квест начинается с предмета, выбиваемого из мобов/объектов)
+      if quests[id]["start"]["I"] then
+        for _, item in pairs(quests[id]["start"]["I"]) do
+          meta = meta or {}
+          -- Не ставим желтый восклицательный знак (!), так как это лут,
+          -- функция SearchItemID сама проставит стандартные точки спавна мобов
+          meta["QTYPE"] = "ITEM_OBJECTIVE_LOOT"
+          maps = pfDatabase:SearchItemID(item, meta, maps)
+        end
+      end
     end
 
     -- search quest-ender
@@ -1435,6 +1446,60 @@ function pfDatabase:SearchQuests(meta, maps)
           for _, object in pairs(quests[id]["start"]["O"]) do
             if objects[object] and strfind(objects[object]["fac"] or pfaction, pfaction) then
               maps = pfDatabase:SearchObjectID(object, meta, maps)
+            end
+          end
+        end
+
+        -- items (квест начинается с предмета, выбиваемого из мобов/объектов)
+        if quests[id]["start"]["I"] then
+          local minChance = tonumber(pfQuest_config.mindropchance) or 0
+
+          for _, item in pairs(quests[id]["start"]["I"]) do
+            if items[item] then
+              meta["itemid"] = item
+              meta["item"] = pfDB.items.loc[item]
+
+              if items[item]["U"] then
+                for unit, chance in pairs(items[item]["U"]) do
+                  if chance >= minChance and units[unit] and strfind(units[unit]["fac"] or pfaction, pfaction) then
+                    meta["QTYPE"] = "NPC_START"
+                    maps = pfDatabase:SearchMobID(unit, meta, maps)
+                  end
+                end
+              end
+
+              if items[item]["O"] then
+                for object, chance in pairs(items[item]["O"]) do
+                  if chance >= minChance and objects[object] and strfind(objects[object]["fac"] or pfaction, pfaction) then
+                    meta["QTYPE"] = "OBJECT_START"
+                    maps = pfDatabase:SearchObjectID(object, meta, maps)
+                  end
+                end
+              end
+
+              if items[item]["R"] then
+                for ref, chance in pairs(items[item]["R"]) do
+                  if chance >= minChance and refloot[ref] then
+                    if refloot[ref]["U"] then
+                      for unit in pairs(refloot[ref]["U"]) do
+                        if units[unit] and strfind(units[unit]["fac"] or pfaction, pfaction) then
+                          meta["QTYPE"] = "NPC_START"
+                          maps = pfDatabase:SearchMobID(unit, meta, maps)
+                        end
+                      end
+                    end
+
+                    if refloot[ref]["O"] then
+                      for object in pairs(refloot[ref]["O"]) do
+                        if objects[object] and strfind(objects[object]["fac"] or pfaction, pfaction) then
+                          meta["QTYPE"] = "OBJECT_START"
+                          maps = pfDatabase:SearchObjectID(object, meta, maps)
+                        end
+                      end
+                    end
+                  end
+                end
+              end
             end
           end
         end
