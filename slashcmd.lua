@@ -32,6 +32,7 @@ SlashCmdList["PFDB"] = function(input, editbox)
     DEFAULT_CHAT_FRAME:AddMessage("|cff33ffcc/db|cffffffff herbs auto |cffcccccc - " .. pfQuest_Loc["Show herbs with an appropriate skill level for your character"])
     DEFAULT_CHAT_FRAME:AddMessage("|cff33ffcc/db|cffffffff scan |cffcccccc - " .. pfQuest_Loc["Scan the server for custom items"])
     DEFAULT_CHAT_FRAME:AddMessage("|cff33ffcc/db|cffffffff query |cffcccccc - " .. pfQuest_Loc["Query the server for completed quests"])
+    DEFAULT_CHAT_FRAME:AddMessage("|cff33ffcc/db|cffffffff undo |cffcccccc - " .. pfQuest_Loc["Undo last chain mark"])
     return
   end
 
@@ -262,6 +263,12 @@ SlashCmdList["PFDB"] = function(input, editbox)
     -- argument: query
   if (arg1 == "query") then
     pfDatabase:QueryServer()
+    return
+  end
+
+  -- argument: undo
+  if (arg1 == "undo") then
+    pfMap:UndoLastChainMark()
     return
   end
 

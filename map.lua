@@ -1096,11 +1096,36 @@ function pfMap:NodeClick()
                 --print("Quest", questidToMark, "is already marked as done - but will still remove node")
                 shouldDeleteNode = true
             else
-                pfQuest_history[questidToMark] = { time(), UnitLevel("player") }
-                --print("Successfully marked quest", questidToMark, "as done")
+                -- Get full chain and mark all quests
+                local fullChain = pfMap:GetFullChainQuestIds(questidToMark)
+                local markedNames = {}
+                local markedIds = {}
 
-                -- Очистить квест из всех кэшей и структур данных
-                pfMap:ClearQuestFromCaches(questidToMark)
+                for chainQuestId, _ in pairs(fullChain) do
+                    if not pfQuest_history[chainQuestId] then
+                        pfQuest_history[chainQuestId] = { time(), UnitLevel("player") }
+                        pfMap:ClearQuestFromCaches(chainQuestId)
+                        table.insert(markedIds, chainQuestId)
+
+                        local qLoc = pfDB["quests"]["loc"] and pfDB["quests"]["loc"][chainQuestId]
+                        local name = qLoc and qLoc["T"] or ("#" .. chainQuestId)
+                        table.insert(markedNames, name)
+                    end
+                end
+
+                -- Store for undo
+                pfMap.lastChainMark = {}
+                for _, id in ipairs(markedIds) do
+                    pfMap.lastChainMark[id] = true
+                end
+
+                -- Print results
+                if table.getn(markedNames) > 1 then
+                    local list = table.concat(markedNames, ", ")
+                    DEFAULT_CHAT_FRAME:AddMessage("|cff33ffccpf|cffffffffQuest: |cffffff00Chain marked: " .. list .. " |cff33ffcc[/pfquest undo]")
+                else
+                    DEFAULT_CHAT_FRAME:AddMessage("|cff33ffccpf|cffffffffQuest: |cffffff00Marked: " .. markedNames[1])
+                end
 
                 shouldDeleteNode = true
             end
@@ -1125,13 +1150,14 @@ function pfMap:NodeClick()
             -- clear cached cluster so that tooltip refresh reflects removal
             pfMap.clusterCache = nil
 
-            -- Удалить все остальные координаты этого же questid
+            -- Remove all chain quest nodes from map
             if questidToMark then
+                local fullChain = pfMap:GetFullChainQuestIds(questidToMark)
                 for addon, addonData in pairs(pfMap.nodes) do
                     for mapId, mapData in pairs(addonData) do
                         for coord, coordNodes in pairs(mapData) do
                             for t, meta in pairs(coordNodes) do
-                                if meta.questid == questidToMark then
+                                if meta.questid == questidToMark or fullChain[meta.questid] then
                                     pfMap.nodes[addon][mapId][coord][t] = nil
                                     if IsEmpty(pfMap.nodes[addon][mapId][coord]) then
                                         pfMap.nodes[addon][mapId][coord] = nil
@@ -3241,4 +3267,80 @@ function pfMap:GetChainQuestIds(questid)
 
   collectChainIds(questid)
   return chainIds
+end
+
+-- Get FULL chain: forward (via chain field) + backward (via reverse chain lookup)
+function pfMap:GetFullChainQuestIds(questid)
+  local chainIds = {}
+  if not questid or not pfDB or not pfDB["quests"] or not pfDB["quests"]["data"] then
+    return chainIds
+  end
+
+  local visited = {}
+
+  -- Go FORWARD: follow chain field
+  local function collectForward(qid)
+    if visited[qid] then return end
+    visited[qid] = true
+    chainIds[qid] = true
+
+    local qData = pfDB["quests"]["data"][qid]
+    if qData and qData["chain"] then
+      for _, nextQuestId in ipairs(qData["chain"]) do
+        collectForward(nextQuestId)
+      end
+    end
+  end
+
+  -- Go BACKWARD: find quests whose chain field points to this quest
+  local function collectBackward(qid)
+    if visited[qid] then return end
+    visited[qid] = true
+    chainIds[qid] = true
+
+    for id, data in pairs(pfDB["quests"]["data"]) do
+      if data and data["chain"] then
+        for _, chainId in ipairs(data["chain"]) do
+          if chainId == qid then
+            collectBackward(id)
+            break
+          end
+        end
+      end
+    end
+  end
+
+  visited[questid] = nil
+  collectForward(questid)
+  visited[questid] = nil
+  collectBackward(questid)
+
+  return chainIds
+end
+
+-- Store last chain mark for undo
+pfMap.lastChainMark = nil
+
+-- Undo the last chain mark
+function pfMap:UndoLastChainMark()
+  if not pfMap.lastChainMark then
+    DEFAULT_CHAT_FRAME:AddMessage("|cff33ffccpf|cffffffffQuest: |cffff6666No chain mark to undo")
+    return
+  end
+
+  local count = 0
+  for questid, _ in pairs(pfMap.lastChainMark) do
+    if pfQuest_history[questid] then
+      pfQuest_history[questid] = nil
+      pfMap:ClearQuestFromCaches(questid)
+      count = count + 1
+    end
+  end
+
+  pfMap.lastChainMark = nil
+  pfMap.queue_update = GetTime()
+  pfQuest.updateQuestGivers = true
+  pfQuest.updateQuestLog = true
+
+  DEFAULT_CHAT_FRAME:AddMessage("|cff33ffccpf|cffffffffQuest: |cffffff00Undone " .. count .. " quest(s)")
 end
