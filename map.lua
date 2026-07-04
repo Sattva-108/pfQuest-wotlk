@@ -2948,6 +2948,14 @@ function pfMap:HideBlizzardBlobs()
     if WorldMapFrame_ClearQuestPOIs then
         WorldMapFrame_ClearQuestPOIs()
     end
+
+    -- Hide the swap button that Blizzard leaves visible after quest selection.
+    -- WorldMapFrame_ClearQuestPOIs only hides numbered POI buttons but not the
+    -- global swap button stored in QUEST_POI_SWAP_BUTTONS, causing it to persist
+    -- across map close/reopen.
+    if QUEST_POI_SWAP_BUTTONS and QUEST_POI_SWAP_BUTTONS["WorldMapPOIFrame"] then
+        QUEST_POI_SWAP_BUTTONS["WorldMapPOIFrame"]:Hide()
+    end
 end
 
 function pfMap:ShowPfQuestNodes()
@@ -3180,6 +3188,20 @@ end)
 
 -- only hook for 3.3.5
 if compat.client >= 30300 then
+    -- Hide swap button on quest selection ONLY when Ctrl is not held.
+    -- During active Ctrl hover the swap button shows turn-in icons and should
+    -- stay visible. But when the map reopens without Ctrl, the stale swap
+    -- button from a previous session persists — this hides it.
+    if WorldMapFrame_SelectQuestFrame then
+        local origSelect = WorldMapFrame_SelectQuestFrame
+        WorldMapFrame_SelectQuestFrame = function(questFrame)
+            origSelect(questFrame)
+            if not IsControlKeyDown() and QUEST_POI_SWAP_BUTTONS and QUEST_POI_SWAP_BUTTONS["WorldMapPOIFrame"] then
+                QUEST_POI_SWAP_BUTTONS["WorldMapPOIFrame"]:Hide()
+            end
+        end
+    end
+
     -- Initialize a variable to track the previous clicked title
     local previousTitle = nil
     -- Highlight Map Quest Log Selection Nodes
