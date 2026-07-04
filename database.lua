@@ -314,6 +314,17 @@ end
 
 pfDatabase.Reload()
 
+-- Build reverse lookup: itemID -> questIDs (for quest starter items)
+pfDatabase.itemToQuest = {}
+for questID, questData in pairs(quests) do
+  if questData.start and questData.start.I then
+    for _, itemID in pairs(questData.start.I) do
+      pfDatabase.itemToQuest[itemID] = pfDatabase.itemToQuest[itemID] or {}
+      table.insert(pfDatabase.itemToQuest[itemID], questID)
+    end
+  end
+end
+
 local bitraces = {
   [1] = "Human",
   [2] = "Orc",

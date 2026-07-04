@@ -3362,11 +3362,20 @@ function pfMap:UndoLastChainMark()
   DEFAULT_CHAT_FRAME:AddMessage("|cff33ffccpf|cffffffffQuest: |cffffff00Undone " .. count .. " quest(s)")
 end
 
--- Hook SetItemRef to handle pfquestundo hyperlink
+-- Hook SetItemRef to handle pfquestundo and pfquestignore hyperlinks
 local pfQuestHookSetItemRef = SetItemRef
 SetItemRef = function(link, text, button)
   if link == "pfquestundo" then
     pfMap:UndoLastChainMark()
+    return
+  end
+  local ignoreItemId = string.match(link, "^pfquestignore:(%d+)$")
+  if ignoreItemId then
+    ignoreItemId = tonumber(ignoreItemId)
+    pfQuest_config.ignoredItems = pfQuest_config.ignoredItems or {}
+    pfQuest_config.ignoredItems[ignoreItemId] = true
+    local _, itemLink = GetItemInfo(ignoreItemId)
+    DEFAULT_CHAT_FRAME:AddMessage("|cff33ffccpf|cffffffffQuest: |cffff4444Ignored: " .. (itemLink or ("item:" .. ignoreItemId)))
     return
   end
   return pfQuestHookSetItemRef(link, text, button)

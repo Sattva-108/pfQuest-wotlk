@@ -77,6 +77,48 @@ local function tsize(tbl)
   return c
 end
 
+-- Initialize ignored items table (deferred until config loads)
+local function ensureIgnoredItems()
+  pfQuest_config.ignoredItems = pfQuest_config.ignoredItems or {}
+end
+
+-- Notify about quest starters for a given item ID
+function pfQuest:NotifyQuestStarters(itemId)
+  if not pfDatabase.itemToQuest or not pfDatabase.itemToQuest[itemId] then return end
+  ensureIgnoredItems()
+  if pfQuest_config.ignoredItems[itemId] then return end
+
+  for _, questID in ipairs(pfDatabase.itemToQuest[itemId]) do
+    if not pfQuest_history[questID] and not pfQuest.questlog[questID] then
+      local qData = pfDB["quests"]["data"][questID]
+      local qLoc = pfDB["quests"]["loc"] and pfDB["quests"]["loc"][questID]
+      if qData and qLoc and qLoc.T then
+        local level = qData.lvl or 0
+        local color = pfQuestCompat.GetDifficultyColor(level)
+        local hex = pfUI and pfUI.api and pfUI.api.rgbhex(color) or "|cffffffff"
+        local ignoreLink = " |Hpfquestignore:" .. itemId .. "|h|cffff4444[Ignore this item]|h|r"
+        DEFAULT_CHAT_FRAME:AddMessage("|cff33ffccpf|cffffffffQuest: |cffffff00Looted item starts " .. hex .. "|Hquest:" .. questID .. ":" .. level .. "|h[" .. qLoc.T .. "]|h|r" .. ignoreLink)
+      end
+    end
+  end
+end
+
+-- Scan all bags for quest starter items
+function pfQuest:ScanBagsForQuestStarters()
+  if not pfDatabase.itemToQuest then return end
+  for bag = 0, 4 do
+    for slot = 1, GetContainerNumSlots(bag) do
+      local link = GetContainerItemLink(bag, slot)
+      if link then
+        local itemId = tonumber(string.match(link, "item:(%d+)"))
+        if itemId then
+          pfQuest:NotifyQuestStarters(itemId)
+        end
+      end
+    end
+  end
+end
+
 local skillstate = ""
 pfQuest:RegisterEvent("QUEST_WATCH_UPDATE")
 pfQuest:RegisterEvent("QUEST_LOG_UPDATE")
@@ -85,6 +127,7 @@ pfQuest:RegisterEvent("PLAYER_LEVEL_UP")
 pfQuest:RegisterEvent("PLAYER_ENTERING_WORLD")
 pfQuest:RegisterEvent("SKILL_LINES_CHANGED")
 pfQuest:RegisterEvent("ADDON_LOADED")
+pfQuest:RegisterEvent("CHAT_MSG_LOOT")
 pfQuest:SetScript("OnEvent", function()
   if event == "ADDON_LOADED" then
     if arg1 == "pfQuest" or arg1 == "pfQuest-tbc" or arg1 == "pfQuest-wotlk" then
@@ -108,6 +151,14 @@ pfQuest:SetScript("OnEvent", function()
     end
   elseif event == "PLAYER_LEVEL_UP" or event == "PLAYER_ENTERING_WORLD" then
     pfQuest.updateQuestGivers = true
+    -- Delayed bag scan for quest starter items (once on first login)
+    if event == "PLAYER_ENTERING_WORLD" and not pfQuest.bagScanDone then
+      pfQuest.bagScanDone = true
+      pfQuest.bagScanTimer = GetTime() + 15
+    end
+  elseif event == "CHAT_MSG_LOOT" then
+    local itemId = tonumber(string.match(arg1 or "", "item:(%d+)"))
+    if itemId then pfQuest:NotifyQuestStarters(itemId) end
   else
     pfQuest.updateQuestLog = true
   end
@@ -125,6 +176,12 @@ pfQuest:SetScript("OnUpdate", function()
   if not pfDatabase.localized then return end
 
   if ( this.tick or .05) > GetTime() then return else this.tick = GetTime() + .05 end
+
+  -- Delayed bag scan for quest starter items (15s after login)
+  if pfQuest.bagScanTimer and GetTime() >= pfQuest.bagScanTimer then
+    pfQuest.bagScanTimer = nil
+    pfQuest:ScanBagsForQuestStarters()
+  end
 
   -- check questlog each second
   if ( this.qlogtick or 1) < GetTime() then
