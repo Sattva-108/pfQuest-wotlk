@@ -1119,12 +1119,29 @@ function pfMap:NodeClick()
                     pfMap.lastChainMark[id] = true
                 end
 
-                -- Print results
+                -- Print results with clickable quest links
                 if table.getn(markedNames) > 1 then
-                    local list = table.concat(markedNames, ", ")
-                    DEFAULT_CHAT_FRAME:AddMessage("|cff33ffccpf|cffffffffQuest: |cffffff00Chain marked: " .. list .. " |cff33ffcc[/pfquest undo]")
+                    local links = {}
+                    for _, id in ipairs(markedIds) do
+                        local qLoc = pfDB["quests"]["loc"] and pfDB["quests"]["loc"][id]
+                        local qData = pfDB["quests"]["data"] and pfDB["quests"]["data"][id]
+                        local name = qLoc and qLoc["T"] or ("#" .. id)
+                        local lvl = qData and qData["lvl"] or 0
+                        local color = pfQuestCompat.GetDifficultyColor(lvl)
+                        local hex = pfUI and pfUI.api and pfUI.api.rgbhex(color) or "|cffffffff"
+                        table.insert(links, hex .. "|Hquest:" .. id .. ":" .. lvl .. "|h[" .. name .. "]|h|r")
+                    end
+                    local list = table.concat(links, " ")
+                    DEFAULT_CHAT_FRAME:AddMessage("|cff33ffccpf|cffffffffQuest: |cffffff00Chain marked: " .. list .. " |Hpfquestundo|h|cff33ffcc[Undo]|h|r")
                 else
-                    DEFAULT_CHAT_FRAME:AddMessage("|cff33ffccpf|cffffffffQuest: |cffffff00Marked: " .. markedNames[1])
+                    local id = markedIds[1]
+                    local qLoc = pfDB["quests"]["loc"] and pfDB["quests"]["loc"][id]
+                    local qData = pfDB["quests"]["data"] and pfDB["quests"]["data"][id]
+                    local name = qLoc and qLoc["T"] or ("#" .. id)
+                    local lvl = qData and qData["lvl"] or 0
+                    local color = pfQuestCompat.GetDifficultyColor(lvl)
+                    local hex = pfUI and pfUI.api and pfUI.api.rgbhex(color) or "|cffffffff"
+                    DEFAULT_CHAT_FRAME:AddMessage("|cff33ffccpf|cffffffffQuest: |cffffff00Marked: " .. hex .. "|Hquest:" .. id .. ":" .. lvl .. "|h[" .. name .. "]|h|r |Hpfquestundo|h|cff33ffcc[Undo]|h|r")
                 end
 
                 shouldDeleteNode = true
@@ -3343,4 +3360,14 @@ function pfMap:UndoLastChainMark()
   pfQuest.updateQuestLog = true
 
   DEFAULT_CHAT_FRAME:AddMessage("|cff33ffccpf|cffffffffQuest: |cffffff00Undone " .. count .. " quest(s)")
+end
+
+-- Hook SetItemRef to handle pfquestundo hyperlink
+local pfQuestHookSetItemRef = SetItemRef
+SetItemRef = function(link, text, button)
+  if link == "pfquestundo" then
+    pfMap:UndoLastChainMark()
+    return
+  end
+  return pfQuestHookSetItemRef(link, text, button)
 end
