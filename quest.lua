@@ -183,6 +183,12 @@ pfQuest:SetScript("OnUpdate", function()
     pfQuest:ScanBagsForQuestStarters()
   end
 
+  -- Refresh active events every hour
+  if not pfQuest.eventCheckTime or GetTime() >= pfQuest.eventCheckTime then
+    pfQuest.eventCheckTime = GetTime() + 3600
+    pfDatabase:CheckActiveEvents()
+  end
+
   -- check questlog each second
   if ( this.qlogtick or 1) < GetTime() then
     if pfQuest:UpdateQuestlog() then

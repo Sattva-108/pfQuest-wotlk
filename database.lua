@@ -325,6 +325,71 @@ for questID, questData in pairs(quests) do
   end
 end
 
+-- Event date table (from AzerothCore game_event, start_day/start_month + length)
+-- eventEntry -> {startDay, startMonth, lengthInDays}
+pfDatabase.eventDates = {
+  [1]  = {21, 6, 14},   -- Midsummer Fire Festival
+  [2]  = {15, 12, 18},  -- Winter Veil
+  [7]  = {23, 1, 14},   -- Lunar Festival
+  [8]  = {7, 2, 14},    -- Love is in the Air
+  [9]  = {12, 4, 7},    -- Noblegarden
+  [10] = {1, 5, 7},     -- Children's Week
+  [11] = {28, 9, 7},    -- Harvest Festival
+  [12] = {18, 10, 14},  -- Hallow's End
+  [24] = {20, 9, 15},   -- Brewfest
+  [26] = {22, 11, 7},   -- Pilgrim's Bounty
+  [50] = {18, 9, 2},    -- Pirates' Day
+  [51] = {31, 10, 2},   -- Day of the Dead
+}
+
+-- Check if an event is currently active (uses server time)
+pfDatabase.activeEvents = {}
+function pfDatabase:CheckActiveEvents()
+  pfDatabase.activeEvents = {}
+  local _, month, day, year = CalendarGetDate()
+  local hour, minute = GetGameTime()
+
+  for eventID, dates in pairs(pfDatabase.eventDates) do
+    local startDay, startMonth, lengthDays = dates[1], dates[2], dates[3]
+    local endDay = startDay + lengthDays
+    local endMonth = startMonth
+
+    -- Handle month overflow (e.g., Winter Veil Dec 15 -> Jan 1)
+    if endDay > 30 then
+      if startMonth == 12 then
+        endMonth = 1
+        endDay = endDay - 30
+      elseif startMonth == 4 or startMonth == 6 or startMonth == 9 or startMonth == 11 then
+        endMonth = startMonth + 1
+        endDay = endDay - 30
+      else
+        endMonth = startMonth + 1
+        endDay = endDay - 31
+      end
+    end
+
+    local active = false
+    if endMonth > startMonth then
+      -- Event spans two months
+      if (month == startMonth and day >= startDay) or (month == endMonth and day <= endDay) then
+        active = true
+      end
+    else
+      -- Event within one month
+      if month == startMonth and day >= startDay and day <= endDay then
+        active = true
+      end
+    end
+
+    if active then
+      pfDatabase.activeEvents[eventID] = true
+    end
+  end
+end
+
+-- Check once at load
+pfDatabase:CheckActiveEvents()
+
 local bitraces = {
   [1] = "Human",
   [2] = "Orc",
@@ -1375,7 +1440,15 @@ function pfDatabase:QuestFilter(id, plevel, pclass, prace)
   if quests[id]["min"] and quests[id]["min"] > plevel + ( pfQuest_config["showhighlevel"] == "1" and 3 or 0 ) then return end
 
   -- hide event quests
-  if quests[id]["event"] and pfQuest_config["showfestival"] == "0" then return end
+  -- showfestival=0: hide ALL event quests
+  -- showfestival=1: show only active event quests
+  if quests[id]["event"] then
+    if pfQuest_config["showfestival"] == "0" then
+      return
+    elseif not pfDatabase.activeEvents[quests[id]["event"]] then
+      return
+    end
+  end
 
   return true
 end
