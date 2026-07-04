@@ -3130,6 +3130,53 @@ end
         end
       end
 
+      -- Batch load event creature quest starters (for event quests not in creature_queststarter)
+      if core == "acore" then
+        local eqsql = "SELECT quest, id FROM game_event_creature_quest WHERE quest IN (" .. quest_ids_string .. ")"
+        local equery = mysql:execute(eqsql)
+        if equery then
+          local row = {}
+          while equery:fetch(row, "a") do
+            local quest_id = tonumber(row.quest)
+            local creature_id = tonumber(row.id)
+            if not quest_starters_creature[quest_id] then
+              quest_starters_creature[quest_id] = {}
+            end
+            -- avoid duplicates
+            local found = false
+            for _, cid in ipairs(quest_starters_creature[quest_id]) do
+              if cid == creature_id then found = true; break end
+            end
+            if not found then
+              table.insert(quest_starters_creature[quest_id], creature_id)
+            end
+          end
+        end
+      end
+
+      -- Batch load event gameobject quest starters
+      if core == "acore" then
+        local eqsql = "SELECT quest, id FROM game_event_gameobject_quest WHERE quest IN (" .. quest_ids_string .. ")"
+        local equery = mysql:execute(eqsql)
+        if equery then
+          local row = {}
+          while equery:fetch(row, "a") do
+            local quest_id = tonumber(row.quest)
+            local object_id = tonumber(row.id)
+            if not quest_starters_object[quest_id] then
+              quest_starters_object[quest_id] = {}
+            end
+            local found = false
+            for _, oid in ipairs(quest_starters_object[quest_id]) do
+              if oid == object_id then found = true; break end
+            end
+            if not found then
+              table.insert(quest_starters_object[quest_id], object_id)
+            end
+          end
+        end
+      end
+
       -- Batch load gameobject quest starters
       local go_starter_table = (core == "acore" and "gameobject_queststarter" or "gameobject_questrelation")
       sql = "SELECT * FROM " .. go_starter_table .. " WHERE " .. go_starter_table .. ".quest IN (" .. quest_ids_string .. ")"
