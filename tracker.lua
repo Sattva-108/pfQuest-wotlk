@@ -66,6 +66,41 @@ local function ShowTooltip()
 
           GameTooltip:AddLine(xpText, .8,.8,.8)
         end
+
+        -- Add quest chain information
+        local chainCount = pfMap:CountQuestsInChain(this.node.questid)
+        if chainCount > 0 then
+          local chainTotalXP = pfMap:GetChainTotalXP(this.node.questid)
+          local chainText
+          if UnitXPMax("player") == 0 then
+            chainText = "Chain: " .. chainCount .. " quests"
+          else
+            chainText = "Chain: " .. chainCount .. " quests (" .. chainTotalXP .. " XP total)"
+          end
+          GameTooltip:AddLine(chainText, .6, .8, 1)
+
+          local chainSummary = pfMap:GetChainSummary(this.node.questid)
+          if table.getn(chainSummary) > 0 then
+            GameTooltip:AddLine("", .5, .5, .5)
+            for _, summaryLine in ipairs(chainSummary) do
+              GameTooltip:AddLine("|cffaaaaaa" .. summaryLine .. "|r", .7, .7, .7)
+            end
+          end
+        end
+
+        -- Add unlock information
+        local unlockCount = pfMap:CountUnlockedQuests(this.node.questid)
+        if unlockCount > 0 then
+          GameTooltip:AddLine("Unlocks: " .. unlockCount .. " quests", .6, .8, 1)
+
+          local unlockSummary = pfMap:GetUnlockSummary(this.node.questid)
+          if table.getn(unlockSummary) > 0 then
+            GameTooltip:AddLine("", .5, .5, .5)
+            for _, uline in ipairs(unlockSummary) do
+              GameTooltip:AddLine("|cffaaaaaa" .. uline .. "|r", .7, .7, .7)
+            end
+          end
+        end
       end
     end
 
