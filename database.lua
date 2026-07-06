@@ -1412,16 +1412,26 @@ function pfDatabase:QuestFilter(id, plevel, pclass, prace)
 
   -- hide missing pre-quests
   if quests[id]["pre"] then
-    -- check all pre-quests for one to be completed
-    local one_complete = nil
+    -- check all pre-quests for one to be satisfied
+    -- negative pre = must be in quest log (active), positive pre = must be completed
+    local one_satisfied = nil
     for _, prequest in pairs(quests[id]["pre"]) do
-      if pfQuest_history[prequest] then
-        one_complete = true
+      if prequest < 0 then
+        -- negative: must be active in quest log
+        local abs_id = math.abs(prequest)
+        if pfQuest.questlog[abs_id] then
+          one_satisfied = true
+        end
+      else
+        -- positive: must be completed
+        if pfQuest_history[prequest] then
+          one_satisfied = true
+        end
       end
     end
 
-    -- hide if none of the pre-quests has been completed
-     if not one_complete then return end
+    -- hide if none of the pre-quests has been satisfied
+     if not one_satisfied then return end
   end
 
   -- hide non-available quests for your race

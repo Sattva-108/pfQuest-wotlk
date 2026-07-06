@@ -3242,7 +3242,7 @@ function pfMap:CountUnlockedQuests(questid)
   for id, data in pairs(pfDB["quests"]["data"]) do
     if data and data["pre"] then
       for _, pre in ipairs(data["pre"]) do
-        if pre == questid then
+        if math.abs(pre) == questid then
           -- Skip if this quest is already in the chain
           if not chainQuestIds[id] then
             count = count + 1
@@ -3266,7 +3266,7 @@ function pfMap:GetUnlockSummary(questid)
   for id, data in pairs(pfDB["quests"]["data"]) do
     if data and data["pre"] then
       for _, pre in ipairs(data["pre"]) do
-        if pre == questid then
+        if math.abs(pre) == questid then
           -- Skip if this quest is already in the chain
           if not chainQuestIds[id] then
             local qLoc = pfDB["quests"]["loc"] and pfDB["quests"]["loc"][id]

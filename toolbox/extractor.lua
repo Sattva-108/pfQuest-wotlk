@@ -3081,8 +3081,8 @@ end
           addon_next_leads_to_prev[addon_next] = addon_next_leads_to_prev[addon_next] or {}
           table.insert(addon_next_leads_to_prev[addon_next], current_id)
         end
-        if addon_prev and addon_prev > 0 then
-          quest_has_addon_prev[current_id] = addon_prev
+        if addon_prev and addon_prev ~= 0 then
+          quest_has_addon_prev[current_id] = addon_prev  -- Keep sign: negative = must be active in quest log
         end
       end
     end
@@ -3338,14 +3338,29 @@ end
       local exclusive_group_column = core == "acore" and "ExclusiveGroup" or "ExclusiveGroup"
 
       -- Batch load pre-quest relationships
-      local query = mysql:execute('SELECT ' .. quest_pk_column .. ' AS entry, ' .. next_quest_id_column .. ' AS next_quest FROM quest_template WHERE ' .. next_quest_id_column .. ' IN (' .. quest_ids_string .. ') AND ' .. exclusive_group_column .. ' < 0')
-      if query then
-        local row = {}
-        while query:fetch(row, "a") do
-          local entry = tonumber(row.entry)
-          local next_quest = tonumber(row.next_quest)
-          quest_pre_relationships[next_quest] = quest_pre_relationships[next_quest] or {}
-          table.insert(quest_pre_relationships[next_quest], entry)
+      if core == "acore" then
+        -- AzerothCore stores PrevQuestID in quest_template_addon
+        -- Query: for each quest, get its PrevQuestID (the prerequisite)
+        local query = mysql:execute('SELECT qta.ID AS entry, qta.PrevQuestID AS pre_quest FROM quest_template_addon qta WHERE qta.PrevQuestID != 0 AND qta.ID IN (' .. quest_ids_string .. ')')
+        if query then
+          local row = {}
+          while query:fetch(row, "a") do
+            local entry = tonumber(row.entry)
+            local pre_quest = tonumber(row.pre_quest)
+            quest_pre_relationships[entry] = quest_pre_relationships[entry] or {}
+            table.insert(quest_pre_relationships[entry], pre_quest)
+          end
+        end
+      else
+        local query = mysql:execute('SELECT ' .. quest_pk_column .. ' AS entry, ' .. next_quest_id_column .. ' AS next_quest FROM quest_template WHERE ' .. next_quest_id_column .. ' IN (' .. quest_ids_string .. ') AND ' .. exclusive_group_column .. ' < 0')
+        if query then
+          local row = {}
+          while query:fetch(row, "a") do
+            local entry = tonumber(row.entry)
+            local next_quest = tonumber(row.next_quest)
+            quest_pre_relationships[next_quest] = quest_pre_relationships[next_quest] or {}
+            table.insert(quest_pre_relationships[next_quest], entry)
+          end
         end
       end
 
@@ -3506,20 +3521,46 @@ end
         pfDB["quests"][data][entry]["event"] = event
       end
 
-      -- Build pre-quest relationships
-      local pre_quests_list = {}
+      -- Build pre-quest relationships (use pre table for deduplication)
+      local pre = {}
+
+      -- Source 1: quest_has_addon_prev (from first pass)
       if quest_has_addon_prev[entry] then
-        table.insert(pre_quests_list, quest_has_addon_prev[entry])
+        pre[quest_has_addon_prev[entry]] = true
       end
       if reward_next_leads_to_prev[entry] then
         for _, prev_id in ipairs(reward_next_leads_to_prev[entry]) do
-          table.insert(pre_quests_list, prev_id)
+          pre[prev_id] = true
         end
       end
       if addon_next_leads_to_prev[entry] then
         for _, prev_id in ipairs(addon_next_leads_to_prev[entry]) do
-          table.insert(pre_quests_list, prev_id)
+          pre[prev_id] = true
         end
+      end
+
+      -- Source 2: raw PrevQuestId column
+      local prevquest_value = quest_template[prevquest_column]
+      if prevquest_value and tonumber(prevquest_value) and tonumber(prevquest_value) ~= 0 then
+        pre[tonumber(prevquest_value)] = true
+      end
+
+      -- Source 3: batch pre-quest relationships
+      if quest_pre_relationships[entry] then
+        for _, pre_quest in ipairs(quest_pre_relationships[entry]) do
+          pre[pre_quest] = true
+        end
+      end
+      if quest_pre_chain_relationships[entry] then
+        for _, pre_quest in ipairs(quest_pre_chain_relationships[entry]) do
+          pre[pre_quest] = true
+        end
+      end
+
+      -- Write pre-quests (deduplicated via table keys)
+      for id in opairs(pre) do
+        pfDB["quests"][data][entry]["pre"] = pfDB["quests"][data][entry]["pre"] or {}
+        table.insert(pfDB["quests"][data][entry]["pre"], tonumber(id))
       end
 
       -- Build chain (next quest) relationships
@@ -3532,34 +3573,12 @@ end
       if addon_next_val and addon_next_val > 0 then
         table.insert(chain_quests_list, addon_next_val)
       end
-
-      if #pre_quests_list > 0 then
-        pfDB["quests"][data][entry]["pre"] = remove_duplicates_from_table(pre_quests_list)
-      end
       if #chain_quests_list > 0 then
         pfDB["quests"][data][entry]["chain"] = remove_duplicates_from_table(chain_quests_list)
       end
 
       -- quest objectives
-      local units, objects, items, itemreq, areatrigger, zones, pre = {}, {}, {}, {}, {}, {}, {}
-
-        -- add single pre-quests
-        local prevquest_value = quest_template[prevquest_column]
-        if prevquest_value and tonumber(prevquest_value) and tonumber(prevquest_value) ~= 0 then
-          pre[math.abs(tonumber(prevquest_value))] = true
-        end
-
-      -- USE BATCH PRE-QUEST DATA - MAJOR OPTIMIZATION! (eliminates 9k+ individual pre-quest queries!)
-      if quest_pre_relationships[entry] then
-        for _, pre_quest in ipairs(quest_pre_relationships[entry]) do
-          pre[pre_quest] = true
-        end
-      end
-      if quest_pre_chain_relationships[entry] then
-        for _, pre_quest in ipairs(quest_pre_chain_relationships[entry]) do
-          pre[pre_quest] = true
-        end
-      end
+      local units, objects, items, itemreq, areatrigger, zones = {}, {}, {}, {}, {}, {}
 
       -- temporary add provided quest item
       items[srcitem] = true
@@ -3832,10 +3851,7 @@ end
       items[srcitem] = nil
 
       -- write pre-quests
-      for id in opairs(pre) do
-        pfDB["quests"][data][entry]["pre"] = pfDB["quests"][data][entry]["pre"] or {}
-        table.insert(pfDB["quests"][data][entry]["pre"], tonumber(id))
-      end
+      -- write pre-quests is now done above (consolidated with pre table)
 
           do -- write objectives
 
