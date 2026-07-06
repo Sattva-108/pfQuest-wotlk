@@ -564,7 +564,8 @@ function is_quest_table(tbl)
   for k, v in pairs(tbl) do
     if k ~= "class" and k ~= "lvl" and k ~= "min" and k ~= "obj" and k ~= "race" and
        k ~= "skill" and k ~= "end" and k ~= "start" and k ~= "pre" and k ~= "chain" and
-       k ~= "event" and k ~= "repeatable" and k ~= "srcitem" and k ~= "xp_diff" then
+       k ~= "event" and k ~= "repeatable" and k ~= "srcitem" and k ~= "xp_diff" and
+       k ~= "rep_fac" and k ~= "rep_min" and k ~= "rep_max" then
       return false
     end
   end
@@ -3045,7 +3046,7 @@ end
       limit_clause = (DEBUG_EXTRACTION and not FULL_EXTRACTION) and (' LIMIT ' .. QUEST_LIMIT) or ''
     end
 
-    local query_string = 'SELECT qt.*, qta.AllowableClasses, qta.PrevQuestID as AddonPrevQuestID, qta.NextQuestID as AddonNextQuestID, qta.ExclusiveGroup as AddonExclusiveGroup, qta.RequiredSkillID as AddonRequiredSkillID, qta.RequiredSkillPoints as AddonRequiredSkillPoints, qxp.Difficulty_3 as BaseQuestXP FROM quest_template qt LEFT JOIN quest_template_addon qta ON qt.' .. quest_pk_column .. ' = qta.ID LEFT JOIN questxp_dbc qxp ON qt.RewardXPDifficulty = qxp.ID' .. where_clause .. ' ORDER BY qt.' .. quest_pk_column .. limit_clause
+    local query_string = 'SELECT qt.*, qta.AllowableClasses, qta.PrevQuestID as AddonPrevQuestID, qta.NextQuestID as AddonNextQuestID, qta.ExclusiveGroup as AddonExclusiveGroup, qta.RequiredSkillID as AddonRequiredSkillID, qta.RequiredSkillPoints as AddonRequiredSkillPoints, qta.RequiredMinRepFaction, qta.RequiredMinRepValue, qta.RequiredMaxRepFaction, qta.RequiredMaxRepValue, qxp.Difficulty_3 as BaseQuestXP FROM quest_template qt LEFT JOIN quest_template_addon qta ON qt.' .. quest_pk_column .. ' = qta.ID LEFT JOIN questxp_dbc qxp ON qt.RewardXPDifficulty = qxp.ID' .. where_clause .. ' ORDER BY qt.' .. quest_pk_column .. limit_clause
 
     -- Count total quests first for progress
     local count_query = mysql:execute('SELECT COUNT(*) as total FROM quest_template qt LEFT JOIN quest_template_addon qta ON qt.' .. quest_pk_column .. ' = qta.ID LEFT JOIN questxp_dbc qxp ON qt.RewardXPDifficulty = qxp.ID' .. where_clause .. limit_clause)
@@ -3451,6 +3452,12 @@ end
         -- USE BATCH EVENT DATA - MAJOR OPTIMIZATION! (eliminates 9k+ individual event queries!)
         event = quest_events_seasonal[entry] or quest_events_creature[entry] or quest_events_gameobject[entry]
 
+      -- Reputation requirements from quest_template_addon
+      local rep_min_faction = tonumber(current_quest_data.RequiredMinRepFaction) or 0
+      local rep_min_value = tonumber(current_quest_data.RequiredMinRepValue) or 0
+      local rep_max_faction = tonumber(current_quest_data.RequiredMaxRepFaction) or 0
+      local rep_max_value = tonumber(current_quest_data.RequiredMaxRepValue) or 0
+
       pfDB["quests"][data][entry] = {}
       pfDB["quests"][data][entry]["min"] = minlevel ~= 0 and minlevel
 
@@ -3519,6 +3526,16 @@ end
       end
       if event and event ~= 0 then
         pfDB["quests"][data][entry]["event"] = event
+      end
+
+      -- Store reputation requirements
+      if rep_min_faction ~= 0 then
+        pfDB["quests"][data][entry]["rep_fac"] = rep_min_faction
+        pfDB["quests"][data][entry]["rep_min"] = rep_min_value
+      end
+      if rep_max_faction ~= 0 and rep_max_value ~= 0 then
+        pfDB["quests"][data][entry]["rep_fac"] = pfDB["quests"][data][entry]["rep_fac"] or rep_max_faction
+        pfDB["quests"][data][entry]["rep_max"] = rep_max_value
       end
 
       -- Build pre-quest relationships (use pre table for deduplication)

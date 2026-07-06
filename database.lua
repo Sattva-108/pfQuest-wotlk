@@ -1443,6 +1443,15 @@ function pfDatabase:QuestFilter(id, plevel, pclass, prace)
   -- hide non-available quests for your profession
    if quests[id]["skill"] and not pfDatabase:GetPlayerSkill(quests[id]["skill"]) then return end
 
+  -- hide quests requiring reputation player doesn't have
+  if quests[id]["rep_fac"] then
+    local _, _, _, _, _, barValue = GetFactionInfoByID(quests[id]["rep_fac"])
+    if barValue then
+      if quests[id]["rep_min"] and barValue < quests[id]["rep_min"] then return end
+      if quests[id]["rep_max"] and barValue > quests[id]["rep_max"] then return end
+    end
+  end
+
   -- hide lowlevel quests (skip for lvl=-1 which means "level not applicable")
   if quests[id]["lvl"] and quests[id]["lvl"] > 0 and quests[id]["lvl"] < plevel - 4 and pfQuest_config["showlowlevel"] == "0" then return end
 
