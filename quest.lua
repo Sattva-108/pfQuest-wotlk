@@ -7,6 +7,115 @@ local _G = client == 11200 and getfenv(0) or _G
 pfQuest = CreateFrame("Frame")
 pfQuest.icons = {}
 
+-- ObjectID -> GatherMate texture path (herbs and mines)
+local gatherTextures = {
+  -- Herbs
+  [1619] = "Herb\\earthroot", [1620] = "Herb\\mageroyal",
+  [1621] = "Herb\\peacebloom", [1622] = "Herb\\silverleaf",
+  [1624] = "Herb\\stranglekelp", [1628] = "Herb\\grave_moss",
+  [1629] = "Herb\\kingsblood", [1630] = "Herb\\liferoot",
+  [1631] = "Herb\\fadeleaf", [1632] = "Herb\\goldthorn",
+  [1633] = "Herb\\khadgars_whisker", [1634] = "Herb\\wintersbite",
+  [1635] = "Herb\\firebloom", [1636] = "Herb\\purple_lotus",
+  [1637] = "Herb\\arthas_tears", [1638] = "Herb\\sungrass",
+  [1639] = "Herb\\blindweed", [1640] = "Herb\\ghost_mushroom",
+  [1641] = "Herb\\gromsblood", [1642] = "Herb\\golden_sansam",
+  [1643] = "Herb\\dreamfoil", [1644] = "Herb\\mountain_silversage",
+  [1645] = "Herb\\plaguebloom", [1646] = "Herb\\icecap",
+  [1647] = "Herb\\black_lotus",
+  [17195] = "Herb\\felweed", [17196] = "Herb\\dreaming_glory",
+  [17197] = "Herb\\terocone", [17198] = "Herb\\ragveil",
+  [17199] = "Herb\\flame_cap", [17200] = "Herb\\ancient_lichen",
+  [17201] = "Herb\\netherbloom", [17202] = "Herb\\nightmare_vine",
+  [17203] = "Herb\\mana_thistle",
+  [181168] = "Herb\\netherdust",
+  [189973] = "Herb\\goldclover", [189974] = "Herb\\talandra's rose",
+  [189975] = "Herb\\tigerlily", [189976] = "Herb\\lichbloom",
+  [189977] = "Herb\\icethorn", [189978] = "Herb\\frostlotus",
+  [189979] = "Herb\\evergreen", [189980] = "Herb\\misc_flower",
+  [190169] = "Herb\\tigerlily",
+  [190170] = "Herb\\evergreen", [190171] = "Herb\\evergreen",
+  [191019] = "Herb\\stranglekelp",
+  [204350] = "Herb\\netherdust",
+  [190172] = "Herb\\evergreen", [190173] = "Herb\\evergreen",
+  -- Mines
+  [1731] = "Mine\\copper", [1732] = "Mine\\tin",
+  [1733] = "Mine\\silver", [1734] = "Mine\\gold",
+  [1735] = "Mine\\iron", [1736] = "Mine\\mithril",
+  [2040] = "Mine\\darkiron", [2054] = "Mine\\tin",
+  [2055] = "Mine\\copper", [2675] = "Mine\\copper",
+  [3577] = "Mine\\gold", [3764] = "Mine\\mithril",
+  [7397] = "Mine\\iron", [7913] = "Mine\\silver",
+  [10371] = "Mine\\iron", [10372] = "Mine\\mithril",
+  [10556] = "Mine\\tin", [10643] = "Mine\\darkiron",
+  [12384] = "Mine\\mithril", [12396] = "Mine\\gold",
+  [13891] = "Mine\\truesilver", [15001] = "Mine\\iron",
+  [15002] = "Mine\\silver", [15003] = "Mine\\gold",
+  [15004] = "Mine\\mithril", [15005] = "Mine\\mithril",
+  [15006] = "Mine\\truesilver", [15007] = "Mine\\darkiron",
+  [15008] = "Mine\\gold", [15009] = "Mine\\iron",
+  [15010] = "Mine\\tin", [15011] = "Mine\\copper",
+  [15012] = "Mine\\tin", [15013] = "Mine\\copper",
+  [16565] = "Mine\\truesilver", [17540] = "Mine\\tin",
+  [17664] = "Mine\\mithril",
+  [17713] = "Mine\\mithril",
+  [18110] = "Mine\\rich_thorium", [18111] = "Mine\\thorium",
+  [18112] = "Mine\\thorium",
+  [32409] = "Mine\\rich_thorium",
+  [1610] = "Mine\\copper",
+  [181252] = "Mine\\cobalt", [181253] = "Mine\\cobalt",
+  [181279] = "Mine\\saronite", [181280] = "Mine\\saronite",
+  [181281] = "Mine\\cobalt", [181283] = "Mine\\cobalt",
+  [181284] = "Mine\\cobalt",
+  [185557] = "Mine\\titanium",
+  [185549] = "Mine\\saronite", [185550] = "Mine\\saronite",
+  [185551] = "Mine\\cobalt",
+  -- Outland mines
+  [181555] = "Mine\\feliron", [181556] = "Mine\\feliron",
+  [181557] = "Mine\\feliron", [181569] = "Mine\\adamantium",
+  [181570] = "Mine\\adamantium", [181571] = "Mine\\adamantium",
+  [181572] = "Mine\\khorium", [181573] = "Mine\\rich_adamantium",
+  [181663] = "Mine\\ethernium", [181664] = "Mine\\ethernium",
+  [181665] = "Mine\\ethernium",
+  -- Northrend mines
+  [181282] = "Mine\\cobalt", [181285] = "Mine\\rich_adamantium",
+}
+
+function pfQuest:LoadGatherIcons()
+  if not pfDB or not pfDB["meta"] or not pfDB["objects"] then return end
+  local loc = pfDB["objects"]["loc"]
+  if not loc then return end
+
+  local iconBase = "Interface\\AddOns\\GatherMate\\Artwork\\"
+  local count = 0
+
+  -- Load herb icons
+  if pfDB["meta"]["herbs"] then
+    for objID in pairs(pfDB["meta"]["herbs"]) do
+      local id = math.abs(objID)
+      local name = loc[id]
+      local tex = gatherTextures[id]
+      if name and tex and not pfQuest.icons[name] then
+        pfQuest.icons[name] = iconBase .. tex .. ".tga"
+        count = count + 1
+      end
+    end
+  end
+
+  -- Load mine icons
+  if pfDB["meta"]["mines"] then
+    for objID in pairs(pfDB["meta"]["mines"]) do
+      local id = math.abs(objID)
+      local name = loc[id]
+      local tex = gatherTextures[id]
+      if name and tex and not pfQuest.icons[name] then
+        pfQuest.icons[name] = iconBase .. tex .. ".tga"
+        count = count + 1
+      end
+    end
+  end
+end
+
 if client >= 30300 then
   pfQuest.dburl = "https://www.wowhead.com/wotlk/quest="
 elseif client >= 20400 then
@@ -133,6 +242,7 @@ pfQuest:SetScript("OnEvent", function()
     if arg1 == "pfQuest" or arg1 == "pfQuest-tbc" or arg1 == "pfQuest-wotlk" then
       pfQuest:AddQuestLogIntegration()
       pfQuest:AddWorldMapIntegration()
+      pfQuest:LoadGatherIcons()
       this.lock = GetTime() + 10
     else
       return
