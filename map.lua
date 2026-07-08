@@ -2821,6 +2821,29 @@ function pfMap:UpdateMinimap()
     end
 end
 
+-- Restore persistent /db mines and /db herbs nodes
+function pfMap:RestoreDBNodes()
+    local meta = { ["addon"] = "PFDB" }
+
+    if pfQuest_config.db_mines_active and pfQuest_config.db_mines then
+        local query = {
+            name = "mines",
+            min = pfQuest_config.db_mines.min,
+            max = pfQuest_config.db_mines.max,
+        }
+        pfDatabase:SearchMetaRelation(query, meta)
+    end
+
+    if pfQuest_config.db_herbs_active and pfQuest_config.db_herbs then
+        local query = {
+            name = "herbs",
+            min = pfQuest_config.db_herbs.min,
+            max = pfQuest_config.db_herbs.max,
+        }
+        pfDatabase:SearchMetaRelation(query, meta)
+    end
+end
+
 local zone, last_zone
 pfMap:RegisterEvent("ZONE_CHANGED")
 pfMap:RegisterEvent("ZONE_CHANGED_NEW_AREA")
@@ -2848,6 +2871,11 @@ pfMap:SetScript("OnEvent", function()
             pfMap.checkUnderbelly = false
             pfMap.playerIsInUnderbelly = false
         end
+
+        -- restore persistent mines/herbs on login
+        if event == "PLAYER_ENTERING_WORLD" then
+            pfMap:RestoreDBNodes()
+        end
     end
 
     -- update nodes on world map changes
@@ -2872,6 +2900,7 @@ pfMap:SetScript("OnEvent", function()
         -- print("Map Change: Cleared all cycling data and cache")
 
         pfMap:UpdateNodes()
+        pfMap:RestoreDBNodes()
         last_zone = zone
     end
 

@@ -159,6 +159,16 @@ SlashCmdList["PFDB"] = function(input, editbox)
 
   -- argument: mines
   if (arg1 == "mines") then
+    -- toggle off if already active with same params
+    if pfQuest_config.db_mines_active and arg2 == "" and not commandlist[2] then
+      pfQuest_config.db_mines_active = nil
+      pfQuest_config.db_mines = nil
+      pfMap:DeleteNode("PFDB")
+      pfMap:UpdateNodes()
+      DEFAULT_CHAT_FRAME:AddMessage("|cff33ffccpf|cffffffffQuest: |cffff3333Mines OFF")
+      return
+    end
+
     local query = {
       name = "mines",
       min = commandlist[2],
@@ -170,13 +180,28 @@ SlashCmdList["PFDB"] = function(input, editbox)
       query.min = query.max - 100
     end
 
+    -- save persistent state
+    pfQuest_config.db_mines_active = true
+    pfQuest_config.db_mines = { min = query.min, max = query.max }
+
     local maps = pfDatabase:SearchMetaRelation(query, meta)
     pfMap:ShowMapID(pfDatabase:GetBestMap(maps))
+    DEFAULT_CHAT_FRAME:AddMessage("|cff33ffccpf|cffffffffQuest: |cff33ff33Mines ON")
     return
   end
 
   -- argument: herbs
   if (arg1 == "herbs") then
+    -- toggle off if already active with same params
+    if pfQuest_config.db_herbs_active and arg2 == "" and not commandlist[2] then
+      pfQuest_config.db_herbs_active = nil
+      pfQuest_config.db_herbs = nil
+      pfMap:DeleteNode("PFDB")
+      pfMap:UpdateNodes()
+      DEFAULT_CHAT_FRAME:AddMessage("|cff33ffccpf|cffffffffQuest: |cffff3333Herbs OFF")
+      return
+    end
+
     local query = {
       name = "herbs",
       min = commandlist[2],
@@ -188,13 +213,22 @@ SlashCmdList["PFDB"] = function(input, editbox)
       query.min = query.max - 100
     end
 
+    -- save persistent state
+    pfQuest_config.db_herbs_active = true
+    pfQuest_config.db_herbs = { min = query.min, max = query.max }
+
     local maps = pfDatabase:SearchMetaRelation(query, meta)
     pfMap:ShowMapID(pfDatabase:GetBestMap(maps))
+    DEFAULT_CHAT_FRAME:AddMessage("|cff33ffccpf|cffffffffQuest: |cff33ff33Herbs ON")
     return
   end
 
   -- argument: clean
   if (arg1 == "clean") then
+    pfQuest_config.db_mines_active = nil
+    pfQuest_config.db_mines = nil
+    pfQuest_config.db_herbs_active = nil
+    pfQuest_config.db_herbs = nil
     pfMap:DeleteNode("PFDB")
     pfMap:UpdateNodes()
     return
