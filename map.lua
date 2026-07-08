@@ -192,9 +192,14 @@ pfMap.nodes = {}
 pfMap.pins = {}
 pfMap.mpins = {}
 pfMap.drawlayer = Minimap
+pfMap.minimapParent = nil
 pfMap.unifiedcache = unifiedcache
 pfMap.playerIsInUnderbelly = false
 pfMap.checkUnderbelly = false
+
+function pfMap:SetMinimapParent(frame)
+    pfMap.minimapParent = frame or nil
+end
 
 pfMap.minimap_indoor = minimap_indoor
 pfMap.minimap_zoom = minimap_zoom
@@ -2792,7 +2797,7 @@ function pfMap:UpdateMinimap()
 
                 if display then
                     if not pfMap.mpins[i] then
-                        pfMap.mpins[i] = pfMap:BuildNode(nodename .. i, pfMap.drawlayer)
+                        pfMap.mpins[i] = pfMap:BuildNode(nodename .. i, pfMap.minimapParent or pfMap.drawlayer)
                     end
 
                     pfMap:UpdateNode(pfMap.mpins[i], node, color, "minimap")
@@ -2805,7 +2810,8 @@ function pfMap:UpdateMinimap()
                         pfMap.mpins[i]:Hide()
                     else
                         pfMap.mpins[i]:ClearAllPoints()
-                        pfMap.mpins[i]:SetPoint("CENTER", pfMap.drawlayer, "CENTER", xPos, -yPos)
+                        local pinParent = pfMap.minimapParent or pfMap.drawlayer
+                        pfMap.mpins[i]:SetPoint("CENTER", pinParent, "CENTER", xPos, -yPos)
                         pfMap.mpins[i]:Show()
                     end
 
