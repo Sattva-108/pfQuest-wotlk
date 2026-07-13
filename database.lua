@@ -1514,21 +1514,21 @@ function pfDatabase:SearchQuests(meta, maps)
       if quests[id]["min"] and quests[id]["min"] > plevel then
         meta["texture"] = pfQuestConfig.path.."\\img\\available"
         meta["vertex"] = { 1, .6, .6 }
-        meta["layer"] = 2
+        meta["layer"] = 1
       end
 
       -- tint low level quests grey
       if quests[id]["lvl"] and quests[id]["lvl"] + 10 < plevel then
         meta["texture"] = pfQuestConfig.path.."\\img\\available"
         meta["vertex"] = { 1, 1, 1 }
-        meta["layer"] = 2
+        meta["layer"] = 1
       end
 
       -- tint event quests as blue
       if quests[id]["event"] then
         meta["texture"] = pfQuestConfig.path.."\\img\\available"
         meta["vertex"] = { .2, .8, 1 }
-        meta["layer"] = 2
+        meta["layer"] = 1
       end
 
       -- iterate over all questgivers

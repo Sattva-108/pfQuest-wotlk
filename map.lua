@@ -73,8 +73,8 @@ end
 local layers = {
     -- regular icons
     [pfQuestConfig.path.."\\img\\available"]          = 1,
-    [pfQuestConfig.path.."\\img\\available_c"]        = 2,
-    [pfQuestConfig.path.."\\img\\complete"]           = 3,
+    [pfQuestConfig.path.."\\img\\available_c"]        = 3,
+    [pfQuestConfig.path.."\\img\\complete"]           = 2,
     [pfQuestConfig.path.."\\img\\complete_c"]         = 4,
     [pfQuestConfig.path.."\\img\\icon_vendor"]        = 5,
     [pfQuestConfig.path.."\\img\\fav"]                = 6,
@@ -1211,7 +1211,7 @@ function pfMap:NodeClick()
         (( pfQuest_config["routecluster"] == "1" and this.layer >= 9 ) or
             ( pfQuest_config["routeender"] == "1" and this.layer == 4) or
             ( pfQuest_config["routestarter"] == "1" and this.layer == 1) or
-            ( pfQuest_config["routestarter"] == "1" and this.layer == 2))
+            ( pfQuest_config["routestarter"] == "1" and this.layer == 3))
     then
         -- set as arrow target priority
         pfQuest.route.SetTarget((not pfQuest.route.IsTarget(this) and this))
@@ -2646,7 +2646,7 @@ function pfMap:UpdateNodes()
                 if ( pfQuest_config["routecluster"] == "1" and pfMap.pins[i].layer >= 9 ) or
                     ( pfQuest_config["routeender"] == "1" and pfMap.pins[i].layer == 4) or
                     ( pfQuest_config["routestarter"] == "1" and pfMap.pins[i].layer == 1 and pfMap.pins[i].texture) or
-                    ( pfQuest_config["routestarter"] == "1" and pfMap.pins[i].layer == 2) or
+                    ( pfQuest_config["routestarter"] == "1" and pfMap.pins[i].layer == 3) or
                     pfMap.pins[i].arrow == true
                 then
                     pfQuest.route:AddPoint({ x, y, pfMap.pins[i] })
