@@ -277,16 +277,29 @@ function serialize_value(file, value, indent)
     local is_unit = is_unit_table(value)
     local is_quest = is_quest_table(value)
 
+    -- Debug: when processing table with GO key
+    if value["GO"] ~= nil and type(value["GO"]) == "table" then
+      local go_ct = 0
+      for _ in pairs(value["GO"]) do go_ct = go_ct + 1 end
+      print("    SERIALIZE TABLE WITH GO: is_small=" .. tostring(is_small) .. " is_coords=" .. tostring(is_coords) .. " is_unit=" .. tostring(is_unit) .. " is_quest=" .. tostring(is_quest) .. " GO_count=" .. go_ct)
+    end
+
     if is_small then
       local init
       local line = "{ "
+      local count = 0
       for _, v in ipairs(value) do  -- Use ipairs for array-like tables
         line = line .. (init and ", " or "") .. (type(v) == "string" and string.format("%q", v) or tostring(v))
         if not init then
           init = true
         end
+        count = count + 1
       end
       line = line .. " }"
+      -- Debug: check if we're writing a GO-related table
+      if count == 0 and tblsize(value) > 0 then
+        print("    SERIALIZATION WARNING: smalltable returned true but ipairs found 0 elements! tblsize=" .. tblsize(value))
+      end
       file:write(line)
     elseif is_coords then
       -- Serialize coords table compactly: {[1]={x,y,z},[2]={x,y,z}}
@@ -321,6 +334,17 @@ function serialize_value(file, value, indent)
         table.insert(keys, k)
       end
       table.sort(keys)
+
+      -- Debug: check if GO is in the keys
+      local has_go = false
+      for _, k in ipairs(keys) do
+        if k == "GO" then has_go = true end
+      end
+      if has_go and type(value["GO"]) == "table" then
+        local go_count = 0
+        for _ in pairs(value["GO"]) do go_count = go_count + 1 end
+        print("    SERIALIZE QUEST: GO found in keys, GO table has " .. go_count .. " entries")
+      end
 
       for _, k in ipairs(keys) do
         local v = value[k]
@@ -565,7 +589,11 @@ function is_quest_table(tbl)
     if k ~= "class" and k ~= "lvl" and k ~= "min" and k ~= "obj" and k ~= "race" and
        k ~= "skill" and k ~= "end" and k ~= "start" and k ~= "pre" and k ~= "chain" and
        k ~= "event" and k ~= "repeatable" and k ~= "srcitem" and k ~= "xp_diff" and
-       k ~= "rep_fac" and k ~= "rep_min" and k ~= "rep_max" then
+       k ~= "rep_fac" and k ~= "rep_min" and k ~= "rep_max" and k ~= "GO" then
+      -- Debug: show which key caused rejection
+      if tblsize(tbl) > 5 then  -- Only for quest-like tables
+        print("    IS_QUEST_TABLE REJECTED: key='" .. tostring(k) .. "' type=" .. type(k) .. " tblsize=" .. tblsize(tbl))
+      end
       return false
     end
   end
@@ -3406,6 +3434,26 @@ end
       end
     end
 
+    -- BATCH LOAD GAMEOBJECT QUEST LINKS (type=10, data1=quest_id)
+    -- Simple mapping: quest_id -> list of gameobject entries linked to this quest
+    print("  Pass 2a.5: Batch loading gameobject quest links...")
+    local go_quest_links = {}  -- quest_id -> {go_entry1, go_entry2, ...}
+    local go_link_query = mysql:execute("SELECT entry, data1 FROM gameobject_template WHERE type = 10 AND data1 > 0")
+    if go_link_query then
+      local row = {}
+      while go_link_query:fetch(row, "a") do
+        local go_entry = tonumber(row.entry)
+        local quest_id = tonumber(row.data1)
+        if go_entry and quest_id and quest_id > 0 then
+          go_quest_links[quest_id] = go_quest_links[quest_id] or {}
+          table.insert(go_quest_links[quest_id], go_entry)
+        end
+      end
+    end
+    local go_link_count = 0
+    for _ in pairs(go_quest_links) do go_link_count = go_link_count + 1 end
+    print("  Found " .. go_link_count .. " quests linked to gameobject type=10")
+
     print("  Pass 2b: Processing quests with pre-loaded relationship data...")
     for i, current_quest_data in ipairs(all_fetched_quests) do
       if debug("quests") then break end
@@ -3909,6 +3957,47 @@ end
                       pfDB["quests"][data][entry]["obj"]["Z"] = pfDB["quests"][data][entry]["obj"]["Z"] or {}
                       table.insert(pfDB["quests"][data][entry]["obj"]["Z"], tonumber(id))
                   end
+
+                  -- GAMEOBJECT QUEST LINKS: Use coordinates already extracted in objects.lua
+                  local go_links = go_quest_links[tonumber(quest_id)]
+                  if entry == 10526 then
+                    print("    DEBUG Q10526: go_links=" .. tostring(go_links ~= nil) .. " tblsize(obj)=" .. tblsize(pfDB["quests"][data][entry]["obj"] or {}))
+                    if go_links then
+                      for _, ge in ipairs(go_links) do
+                        print("    DEBUG Q10526: checking GO " .. ge)
+                        local od = pfDB["objects"][data]
+                        print("    DEBUG Q10526: objects data=" .. tostring(od ~= nil))
+                        if od then
+                          local ge_data = od[ge]
+                          print("    DEBUG Q10526: objects[" .. ge .. "]=" .. tostring(ge_data ~= nil))
+                          if ge_data then
+                            print("    DEBUG Q10526: objects[" .. ge .. "].coords=" .. tostring(ge_data["coords"] ~= nil))
+                            if ge_data["coords"] then
+                              print("    DEBUG Q10526: coords count=" .. #ge_data["coords"])
+                            end
+                          end
+                        end
+                      end
+                    end
+                  end
+                  if go_links then
+                    pfDB["quests"][data][entry]["obj"]["GO"] = pfDB["quests"][data][entry]["obj"]["GO"] or {}
+                    for _, go_entry in ipairs(go_links) do
+                      local obj_data = pfDB["objects"][data] and pfDB["objects"][data][go_entry]
+                      if obj_data and obj_data["coords"] then
+                        for _, coord in ipairs(obj_data["coords"]) do
+                          table.insert(pfDB["quests"][data][entry]["obj"]["GO"], {go_entry, coord[1], coord[2], coord[3]})
+                        end
+                      end
+                    end
+                    if entry == 10526 then
+                      local go_count = pfDB["quests"][data][entry]["obj"]["GO"] and #pfDB["quests"][data][entry]["obj"]["GO"] or 0
+                      print("    DEBUG Q10526 AFTER INSERT: GO count=" .. go_count)
+                      if go_count > 0 then
+                        print("    DEBUG Q10526 GO[1]=" .. tostring(pfDB["quests"][data][entry]["obj"]["GO"][1][1]))
+                      end
+                    end
+                  end
               end
 
               -- quest starter (using pre-loaded data)
@@ -3999,6 +4088,26 @@ end
       print("  ItemReq Summary: Found " .. total_itemreq_count .. " total item-target relationships.")
     else
       print("  ItemReq Summary: No item-target relationships found (may be normal for AzerothCore).")
+    end
+
+    -- Gameobject quest links summary
+    local go_obj_count = 0
+    for _, quest_data in pairs(pfDB["quests"][data] or {}) do
+      if quest_data.obj and quest_data.obj.GO and #quest_data.obj.GO > 0 then
+        go_obj_count = go_obj_count + 1
+      end
+    end
+    if go_obj_count > 0 then
+      print("  Gameobject Links Summary: " .. go_obj_count .. " quests got gameobject objectives from objects.lua")
+    end
+    -- DEBUG: Check quest 10526 right after quest loop
+    if pfDB["quests"][data] and pfDB["quests"][data][10526] then
+      local q = pfDB["quests"][data][10526]
+      local go_count = (q.obj and q.obj.GO) and #q.obj.GO or 0
+      print("  DEBUG POST-LOOP: Quest 10526 GO count=" .. go_count)
+      if go_count > 0 then
+        print("  DEBUG POST-LOOP: GO[1]=" .. tostring(q.obj.GO[1][1]) .. " x=" .. tostring(q.obj.GO[1][2]) .. " y=" .. tostring(q.obj.GO[1][3]))
+      end
     end
     -- ДОБАВЬТЕ:
     collectgarbage("collect")
@@ -4687,8 +4796,14 @@ end
     end
   end
 
+  -- DEBUG: Check if compression is running
   if expansion ~= "vanilla" then
     print("- compress DB")
+    -- Check quest 10526 before compression
+    if pfDB["quests"][data] and pfDB["quests"][data][10526] then
+      local go_count = (pfDB["quests"][data][10526].obj and pfDB["quests"][data][10526].obj.GO) and #pfDB["quests"][data][10526].obj.GO or 0
+      print("  DEBUG COMPRESS: Quest 10526 GO count BEFORE=" .. go_count)
+    end
     pfDB["areatrigger"][data] = tablesubstract(pfDB["areatrigger"][data], pfDB["areatrigger"]["data"])
     pfDB["units"][data] = tablesubstract(pfDB["units"][data], pfDB["units"]["data"])
     pfDB["objects"][data] = tablesubstract(pfDB["objects"][data], pfDB["objects"]["data"])
@@ -4771,6 +4886,33 @@ end
       collectgarbage("collect")
       print("  Memory cleanup after zone-locales: " .. math.floor(collectgarbage("count")) .. " KB")
 
+  -- COMPREHENSIVE DEBUG: Check quest 10526 before writing
+  print("  === COMPREHENSIVE DEBUG ===")
+  if pfDB["quests"] and pfDB["quests"][data] and pfDB["quests"][data][10526] then
+    local q = pfDB["quests"][data][10526]
+    print("  Quest 10526 exists: YES")
+    print("  Quest 10526 keys: " .. table.concat((function() local k={}; for kk in pairs(q) do table.insert(k,kk) end; return k end)(), ","))
+    if q.obj then
+      print("  Quest 10526 obj keys: " .. table.concat((function() local k={}; for kk in pairs(q.obj) do table.insert(k,kk) end; return k end)(), ","))
+      if q.obj.GO then
+        print("  Quest 10526 GO type: " .. type(q.obj.GO) .. " is_table: " .. tostring(type(q.obj.GO)=="table"))
+        if type(q.obj.GO) == "table" then
+          print("  Quest 10526 GO count: " .. #q.obj.GO)
+          for i, v in ipairs(q.obj.GO) do
+            print("  Quest 10526 GO[" .. i .. "] type=" .. type(v) .. " val=" .. tostring(v))
+          end
+        end
+      else
+        print("  Quest 10526 obj.GO = nil")
+      end
+    else
+      print("  Quest 10526 obj = nil")
+    end
+  else
+    print("  Quest 10526 NOT FOUND!")
+  end
+  print("  === END DEBUG ===")
+
   -- write down tables
   print("- writing database...")
   output = settings.custom and "output/custom/" or "output/"
@@ -4813,6 +4955,23 @@ end
   collectgarbage("collect")
   -- print("    Memory after refloot: " .. math.floor(collectgarbage("count")) .. " KB")
 
+  -- DEBUG: Check quest 10526 right before writing
+  if pfDB["quests"][data] and pfDB["quests"][data][10526] then
+    local q = pfDB["quests"][data][10526]
+    local go_count = (q.obj and q.obj.GO) and #q.obj.GO or 0
+    print("  DEBUG PRE-WRITE: Quest 10526 GO count=" .. go_count)
+    if go_count > 0 then
+      print("  DEBUG PRE-WRITE: GO[1]=" .. tostring(q.obj.GO[1][1]))
+    end
+    -- Also check what keys exist in obj
+    if q.obj then
+      local keys = {}
+      for k in pairs(q.obj) do table.insert(keys, k) end
+      print("  DEBUG PRE-WRITE: obj keys=" .. table.concat(keys, ","))
+    end
+  else
+    print("  DEBUG PRE-WRITE: Quest 10526 NOT FOUND in pfDB[\"quests\"][\"" .. data .. "\"]!")
+  end
   print("  Writing quests...")
   serialize(output .. string.format("quests%s.lua", exp), "pfDB[\"quests\"][\""..data.."\"]", pfDB["quests"][data])
   pfDB["quests"][data] = nil
