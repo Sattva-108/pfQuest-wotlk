@@ -2692,13 +2692,16 @@ function pfMap:UpdateNodes()
         if pfMap.pins[j] then pfMap.pins[j]:Hide() end
     end
 
-    -- Apply the inverted world map visibility mode
+    -- Save how many pins belong to the current zone so stale pins from other zones stay hidden.
+    pfMap.activePinCount = i - 1
+
+    -- Apply the inverted world map visibility mode with ! always visible
     if WorldMapFrame:IsShown() then
         if pfMap.showCustomNodes then
             pfMap:ShowPfQuestNodes()
             pfMap:HideBlizzardBlobs()
         else
-            pfMap:HidePfQuestNodes()
+            pfMap:ShowPfQuestStartersOnly()
             pfMap:ShowBlizzardBlobs()
         end
     end
@@ -3007,10 +3010,15 @@ function pfMap:HideBlizzardBlobs()
 end
 
 function pfMap:ShowPfQuestNodes()
-    for i, pin in pairs(pfMap.pins) do
+    local count = pfMap.activePinCount or 0
+    for i = 1, count do
+        local pin = pfMap.pins[i]
         if pin and pin.Show then
             pin:Show()
         end
+    end
+    for i = count + 1, table.getn(pfMap.pins) do
+        if pfMap.pins[i] then pfMap.pins[i]:Hide() end
     end
 end
 
@@ -3019,6 +3027,36 @@ function pfMap:HidePfQuestNodes()
         if pin and pin.Hide then
             pin:Hide()
         end
+    end
+end
+
+function pfMap:IsQuestStarterPin(pin)
+    if not pin or not pin.node then return false end
+    for title, meta in pairs(pin.node) do
+        if meta.QTYPE == "NPC_START" or meta.QTYPE == "OBJECT_START" then
+            return true
+        end
+        if meta.texture and string.find(meta.texture, "available") then
+            return true
+        end
+    end
+    return false
+end
+
+function pfMap:ShowPfQuestStartersOnly()
+    local count = pfMap.activePinCount or 0
+    for i = 1, count do
+        local pin = pfMap.pins[i]
+        if pin then
+            if pfMap:IsQuestStarterPin(pin) then
+                pin:Show()
+            else
+                pin:Hide()
+            end
+        end
+    end
+    for i = count + 1, table.getn(pfMap.pins) do
+        if pfMap.pins[i] then pfMap.pins[i]:Hide() end
     end
 end
 
@@ -3196,11 +3234,11 @@ pfMap:SetScript("OnUpdate", function()
     if WorldMapFrame:IsShown() then
         resetmap = true
 
-        -- Default to Blizzard blobs when Ctrl is not held.
+        -- Default mode: show Blizzard blobs and pfQuest ! starters.
         if not controlkey.pressed and not pfMap.defaultBlobsApplied then
             pfMap.showCustomNodes = false
             pfMap.defaultBlobsApplied = true
-            pfMap:HidePfQuestNodes()
+            pfMap:ShowPfQuestStartersOnly()
             pfMap:ShowBlizzardBlobs()
         end
     elseif resetmap == true then
@@ -3234,10 +3272,10 @@ pfMap:SetScript("OnUpdate", function()
     else
         hidecluster = nil
 
-        -- Ctrl released: return to Blizzard blobs and hide pfQuest nodes
+        -- Ctrl released: return to Blizzard blobs and pfQuest ! starters
         if pfMap.showCustomNodes then
             pfMap.showCustomNodes = false
-            pfMap:HidePfQuestNodes()
+            pfMap:ShowPfQuestStartersOnly()
             pfMap:ShowBlizzardBlobs()
         end
     end
