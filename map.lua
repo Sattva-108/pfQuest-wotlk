@@ -3283,15 +3283,22 @@ end)
 
 -- only hook for 3.3.5
 if compat.client >= 30300 then
-    -- Hide swap button on quest selection ONLY when Ctrl is not held.
-    -- During active Ctrl hover the swap button shows turn-in icons and should
-    -- stay visible. But when the map reopens without Ctrl, the stale swap
-    -- button from a previous session persists — this hides it.
+    -- Protect against nil completion text on some servers to avoid the WorldMapFrame.lua concat error.
+    local orig_GetQuestLogCompletionText = GetQuestLogCompletionText
+    if orig_GetQuestLogCompletionText then
+        GetQuestLogCompletionText = function(questLogIndex)
+            local text = orig_GetQuestLogCompletionText(questLogIndex)
+            return text or QUEST_WATCH_QUEST_READY or "Quest Complete"
+        end
+    end
+
+    -- Hide Blizzard SWAP buttons only while the pfQuest custom-node mode is active.
+    -- In normal mode they should remain fully functional.
     if WorldMapFrame_SelectQuestFrame then
         local origSelect = WorldMapFrame_SelectQuestFrame
         WorldMapFrame_SelectQuestFrame = function(questFrame)
             origSelect(questFrame)
-            if not IsControlKeyDown() and QUEST_POI_SWAP_BUTTONS and QUEST_POI_SWAP_BUTTONS["WorldMapPOIFrame"] then
+            if pfMap.showCustomNodes and QUEST_POI_SWAP_BUTTONS and QUEST_POI_SWAP_BUTTONS["WorldMapPOIFrame"] then
                 QUEST_POI_SWAP_BUTTONS["WorldMapPOIFrame"]:Hide()
             end
         end
