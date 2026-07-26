@@ -207,6 +207,8 @@ pfMap.minimap_sizes = minimap_sizes
 
 -- Ctrl+Map blob switching state
 pfMap.showBlizzardBlobs = false
+pfMap.showCustomNodes = false
+pfMap.defaultBlobsApplied = nil
 pfMap.originalQuestPOI = nil  -- Store original questPOI setting
 
 -- INSERT: Track the node that owns the currently displayed tooltip so we can fully rebuild it when Alt is pressed.
@@ -2689,6 +2691,17 @@ function pfMap:UpdateNodes()
     for j=i, table.getn(pfMap.pins) do
         if pfMap.pins[j] then pfMap.pins[j]:Hide() end
     end
+
+    -- Apply the inverted world map visibility mode
+    if WorldMapFrame:IsShown() then
+        if pfMap.showCustomNodes then
+            pfMap:ShowPfQuestNodes()
+            pfMap:HideBlizzardBlobs()
+        else
+            pfMap:HidePfQuestNodes()
+            pfMap:ShowBlizzardBlobs()
+        end
+    end
 end
 
 local coord_cache = {}
@@ -3182,16 +3195,26 @@ pfMap:SetScript("OnUpdate", function()
     -- reset map to current zone once map is closed
     if WorldMapFrame:IsShown() then
         resetmap = true
+
+        -- Default to Blizzard blobs when Ctrl is not held.
+        if not controlkey.pressed and not pfMap.defaultBlobsApplied then
+            pfMap.showCustomNodes = false
+            pfMap.defaultBlobsApplied = true
+            pfMap:HidePfQuestNodes()
+            pfMap:ShowBlizzardBlobs()
+        end
     elseif resetmap == true then
         SetMapToCurrentZone()
         resetmap = nil
+        pfMap.defaultBlobsApplied = nil
 
-        -- Reset blob switching state when map closes
-        if pfMap.showBlizzardBlobs then
-            pfMap.showBlizzardBlobs = false
+        -- Reset to the default Blizzard view when the map closes.
+        if pfMap.showCustomNodes then
+            pfMap.showCustomNodes = false
+            pfMap:HidePfQuestNodes()
             pfMap:HideBlizzardBlobs()
-            pfMap:ShowPfQuestNodes()
-            pfMap:UpdateNodes()
+        else
+            pfMap:HideBlizzardBlobs()
         end
     end
 
@@ -3202,21 +3225,20 @@ pfMap:SetScript("OnUpdate", function()
     if controlkey.pressed then
         hidecluster = MouseIsOver(WorldMapFrame)
 
-        -- Ctrl+Map blob switching: show Blizzard blobs, hide pfQuest nodes
-        if hidecluster and WorldMapFrame:IsShown() and not pfMap.showBlizzardBlobs then
-            pfMap.showBlizzardBlobs = true
-            pfMap:HidePfQuestNodes()
-            pfMap:ShowBlizzardBlobs()
+        -- Ctrl: show pfQuest nodes, hide Blizzard blobs
+        if hidecluster and WorldMapFrame:IsShown() and not pfMap.showCustomNodes then
+            pfMap.showCustomNodes = true
+            pfMap:HideBlizzardBlobs()
+            pfMap:ShowPfQuestNodes()
         end
     else
         hidecluster = nil
 
-        -- Restore pfQuest nodes when Ctrl released
-        if pfMap.showBlizzardBlobs then
-            pfMap.showBlizzardBlobs = false
-            pfMap:HideBlizzardBlobs()
-            pfMap:ShowPfQuestNodes()
-            pfMap:UpdateNodes()
+        -- Ctrl released: return to Blizzard blobs and hide pfQuest nodes
+        if pfMap.showCustomNodes then
+            pfMap.showCustomNodes = false
+            pfMap:HidePfQuestNodes()
+            pfMap:ShowBlizzardBlobs()
         end
     end
 end)
@@ -3243,8 +3265,14 @@ if compat.client >= 30300 then
     local pfHookWorldMapQuestFrame_OnMouseUp = WorldMapQuestFrame_OnMouseUp
     WorldMapQuestFrame_OnMouseUp = function(self)
         pfHookWorldMapQuestFrame_OnMouseUp(self)
-        WorldMapBlobFrame:Hide()
-        WorldMapFrame_ClearQuestPOIs()
+        if pfMap.showCustomNodes then
+            if WorldMapBlobFrame and WorldMapBlobFrame.Hide then
+                WorldMapBlobFrame:Hide()
+            end
+            if WorldMapFrame_ClearQuestPOIs then
+                WorldMapFrame_ClearQuestPOIs()
+            end
+        end
         if not IsShiftKeyDown() then
             pfMap.highlight = nil
             local questLogIndex = GetQuestLogSelection()
