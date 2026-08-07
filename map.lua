@@ -2843,26 +2843,35 @@ function pfMap:UpdateMinimap()
     end
 end
 
--- Restore persistent /db mines and /db herbs nodes
+-- Restore persistent /db mines and /db herbs nodes asynchronously to prevent freezing
 function pfMap:RestoreDBNodes()
-    local meta = { ["addon"] = "PFDB" }
+    pfMap.restoreQueue = {}
+
+    local function QueueTrack(track, min_skill, max_skill)
+        if pfDB["meta"] and pfDB["meta"][track] then
+            for entry, value in pairs(pfDB["meta"][track]) do
+                local valid = true
+                if min_skill and tonumber(min_skill) and tonumber(value) < tonumber(min_skill) then valid = false end
+                if max_skill and tonumber(max_skill) and tonumber(value) > tonumber(max_skill) then valid = false end
+
+                if valid then
+                    table.insert(pfMap.restoreQueue, math.abs(entry))
+                end
+            end
+        end
+    end
 
     if pfQuest_config.db_mines_active and pfQuest_config.db_mines then
-        local query = {
-            name = "mines",
-            min = pfQuest_config.db_mines.min,
-            max = pfQuest_config.db_mines.max,
-        }
-        pfDatabase:SearchMetaRelation(query, meta)
+        QueueTrack("mines", pfQuest_config.db_mines.min, pfQuest_config.db_mines.max)
     end
 
     if pfQuest_config.db_herbs_active and pfQuest_config.db_herbs then
-        local query = {
-            name = "herbs",
-            min = pfQuest_config.db_herbs.min,
-            max = pfQuest_config.db_herbs.max,
-        }
-        pfDatabase:SearchMetaRelation(query, meta)
+        QueueTrack("herbs", pfQuest_config.db_herbs.min, pfQuest_config.db_herbs.max)
+    end
+    
+    if table.getn(pfMap.restoreQueue) > 0 then
+        pfMap.isRestoring = true
+        pfMap.restoreIndex = 1
     end
 end
 
@@ -2894,9 +2903,12 @@ pfMap:SetScript("OnEvent", function()
             pfMap.playerIsInUnderbelly = false
         end
 
-        -- restore persistent mines/herbs on login
+        -- restore persistent mines/herbs on login (once per session, delayed)
         if event == "PLAYER_ENTERING_WORLD" then
-            pfMap:RestoreDBNodes()
+            if not pfMap.dbNodesRestored then
+                pfMap.dbNodesRestored = true
+                pfMap.dbRestoreTimer = GetTime() + 3.0
+            end
         end
     end
 
@@ -2922,7 +2934,6 @@ pfMap:SetScript("OnEvent", function()
         -- print("Map Change: Cleared all cycling data and cache")
 
         pfMap:UpdateNodes()
-        pfMap:RestoreDBNodes()
         last_zone = zone
     end
 
@@ -3250,6 +3261,36 @@ pfMap:SetScript("OnUpdate", function()
     if pfMap.queue_update and pfMap.queue_update + .25 < GetTime() then
         pfMap.queue_update = nil
         pfMap:UpdateNodes()
+    end
+
+    -- Отложенная генерация очереди тяжелых нодов /db после загрузочного экрана
+    if pfMap.dbRestoreTimer and GetTime() > pfMap.dbRestoreTimer then
+        pfMap.dbRestoreTimer = nil
+        pfMap:RestoreDBNodes()
+    end
+
+    -- Плавная обработка очереди нодов (полностью убирает сильный лаг)
+    if pfMap.isRestoring and pfMap.restoreQueue then
+        local meta = { ["addon"] = "PFDB" }
+        local batchSize = 100 -- Обрабатываем 100 объектов за кадр (без фризов)
+        local limit = math.min(pfMap.restoreIndex + batchSize - 1, table.getn(pfMap.restoreQueue))
+        
+        for i = pfMap.restoreIndex, limit do
+            local id = pfMap.restoreQueue[i]
+            pfDatabase:SearchObjectID(id, meta)
+        end
+        
+        pfMap.restoreIndex = limit + 1
+        
+        -- Постоянно отодвигаем queue_update, чтобы карта не моргала, пока идет загрузка
+        pfMap.queue_update = GetTime()
+        
+        if pfMap.restoreIndex > table.getn(pfMap.restoreQueue) then
+            pfMap.isRestoring = false
+            pfMap.restoreQueue = nil
+            -- Очередь пуста, разрешаем финальную отрисовку
+            pfMap.queue_update = GetTime()
+        end
     end
 
     -- reset map to current zone once map is closed
