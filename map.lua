@@ -925,6 +925,7 @@ function pfMap:AddNode(meta)
     if not meta then return end
     if not meta["zone"] then return end
     if not meta["title"] then return end
+    if pfQuest_config and pfQuest_config["ignored_nodes"] and pfQuest_config["ignored_nodes"][meta["title"]] then return end
 
     meta["description"] = pfDatabase:BuildQuestDescription(meta)
 
@@ -1063,6 +1064,17 @@ end
 
 function pfMap:NodeClick()
     if IsShiftKeyDown() then
+        local clickedNode = this.node and this.title and this.node[this.title]
+        if clickedNode and clickedNode.addon == "PFDB" then
+            pfQuest_config["ignored_nodes"] = pfQuest_config["ignored_nodes"] or {}
+            pfQuest_config["ignored_nodes"][this.title] = true
+            pfMap:DeleteNode("PFDB", this.title)
+            pfMap.clusterCache = nil
+            pfMap.queue_update = GetTime()
+            DEFAULT_CHAT_FRAME:AddMessage("|cff33ffccpfQuest:|r Node |cffffcc00[" .. this.title .. "]|r added to permanent ignore.")
+            return
+        end
+
         local questidToMark = nil
 
         -- DETAILED DEBUG: Check cycling state at click time
@@ -1914,6 +1926,10 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
             -- add tooltip help if setting is enabled
             if pfQuest_config["tooltiphelp"] == "1" then
                 local text = pfQuest_Loc["Use <Shift>-Click To Remove Nodes"]
+                local isPFDBNode = false
+                for _, meta in pairs(currentNode.node or {}) do
+                    if meta.addon == "PFDB" then isPFDBNode = true break end
+                end
 
                 if currentNode.cluster then
                     text = pfQuest_Loc["Hold <Ctrl> To Hide Cluster"]
@@ -1923,6 +1939,9 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
                     text = pfQuest_Loc["Click Node To Change Color"]
                 elseif currentNode.questid and currentNode.texture and currentNode.layer < 5 then
                     text = pfQuest_Loc["Use <Shift>-Click To Mark Quest As Done"]
+                end
+                if isPFDBNode then
+                    text = "Use <Shift>-Click To Permanently Hide Nodes"
                 end
 
                 tooltip:AddLine(text, .6, .6, .6)
@@ -2376,6 +2395,10 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
     -- add tooltip help if setting is enabled
     if pfQuest_config["tooltiphelp"] == "1" then
         local text = pfQuest_Loc["Use <Shift>-Click To Remove Nodes"]
+        local isPFDBNode = false
+        for _, meta in pairs(currentNode.node or {}) do
+            if meta.addon == "PFDB" then isPFDBNode = true break end
+        end
 
         if currentNode.cluster then
             text = pfQuest_Loc["Hold <Ctrl> To Hide Cluster"]
@@ -2385,6 +2408,9 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
             text = pfQuest_Loc["Click Node To Change Color"]
         elseif currentNode.questid and currentNode.texture and currentNode.layer < 5 then
             text = pfQuest_Loc["Use <Shift>-Click To Mark Quest As Done"]
+        end
+        if isPFDBNode then
+            text = "Use <Shift>-Click To Permanently Hide Nodes"
         end
 
         -- update tooltip and sizes with separator

@@ -152,6 +152,12 @@ pfQuest_defconfig = {
     default = "1", type = "button", func = reset.config },
   { text = L["Reset Quest History"],
     default = "1", type = "button", func = reset.history },
+  { text = "Reset Ignored Nodes",
+    default = "1", type = "button", func = function()
+      pfQuest_config["ignored_nodes"] = {}
+      pfQuest:ResetAll()
+      DEFAULT_CHAT_FRAME:AddMessage("|cff33ffccpfQuest:|r Ignored resource nodes cleared.")
+    end },
   { text = L["Reset Cache"],
     default = "1", type = "button", func = reset.cache },
   { text = L["Reset Everything"],
@@ -186,6 +192,7 @@ pfQuestConfig:SetScript("OnEvent", function()
     pfQuest_history = pfQuest_history or {}
     pfQuest_colors = pfQuest_colors or {}
     pfQuest_config = pfQuest_config or {}
+    pfQuest_config["ignored_nodes"] = pfQuest_config["ignored_nodes"] or {}
     pfBrowser_fav = pfBrowser_fav or {["units"] = {}, ["objects"] = {}, ["items"] = {}, ["quests"] = {}}
 
     -- clear quest history on new characters
