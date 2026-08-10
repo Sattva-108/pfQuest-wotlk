@@ -564,6 +564,35 @@ function pfMap:GetQuestXP(questData)
     return math.floor(xp)
 end
 
+local function FormatTimeAgo(seconds)
+    if not seconds or seconds < 0 then return "just now" end
+    if seconds < 60 then
+        return "less than a minute ago"
+    elseif seconds < 3600 then
+        return math.floor(seconds / 60) .. " min ago"
+    elseif seconds < 86400 then
+        return math.floor(seconds / 3600) .. " hr ago"
+    else
+        return math.floor(seconds / 86400) .. " days ago"
+    end
+end
+
+local function AddGatherStatistics(meta, tooltip)
+    if not meta or meta.addon ~= "PFDB" or not pfQuest_gathers then return end
+
+    local zoneID = meta.zone
+    local x = tonumber(meta.x)
+    local y = tonumber(meta.y)
+    if not zoneID or not x or not y or not pfQuest_gathers[zoneID] then return end
+
+    local coordKey = string.format("%.1f|%.1f", x, y)
+    local data = pfQuest_gathers[zoneID][coordKey]
+    if data then
+        tooltip:AddDoubleLine("Times gathered:", data.count, .8, .8, .8, 1, 1, 1)
+        tooltip:AddDoubleLine("Last gathered:", FormatTimeAgo(time() - data.lastSeen), .8, .8, .8, 1, 1, 1)
+    end
+end
+
 function pfMap:ShowTooltip(meta, tooltip, forceCompact)
     local catch = nil
     local catch_obj = nil
@@ -576,6 +605,7 @@ function pfMap:ShowTooltip(meta, tooltip, forceCompact)
 
     -- Ultra lightweight: just store meta when tooltip shown
     pfMap.tooltipMeta = meta
+    AddGatherStatistics(meta, tooltip)
 
     -- add quest data
     if meta["quest"] then

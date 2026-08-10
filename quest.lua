@@ -246,6 +246,46 @@ function pfQuest:ScanBagsForQuestStarters()
 end
 
 local skillstate = ""
+
+local function GetNodeNameAndCoordsFromItemId(itemId)
+  if not itemId or not pfDB or not pfDB["items"] or not pfDB["items"]["data"] then return nil end
+
+  local itemData = pfDB["items"]["data"][itemId]
+  if not itemData or not itemData["O"] then return nil end
+
+  local playerX, playerY = GetPlayerMapPosition("player")
+  playerX, playerY = playerX * 100, playerY * 100
+  local currentZone = pfMap:GetMapID(GetCurrentMapContinent(), GetCurrentMapZone())
+
+  local objectData = pfDB["objects"] and pfDB["objects"]["data"]
+  local objectNames = pfDB["objects"] and pfDB["objects"]["loc"]
+  local bestMatchName, bestX, bestY, bestDistance = nil, nil, nil, math.huge
+
+  for objectId in pairs(itemData["O"]) do
+    local objectName = objectNames and objectNames[objectId]
+    local data = objectData and objectData[objectId]
+    if objectName then
+      if data and data["coords"] and type(currentZone) == "number" then
+        for _, coord in pairs(data["coords"]) do
+          local nodeX, nodeY, nodeZone = unpack(coord)
+          if nodeZone == currentZone then
+            local distance = math.sqrt((playerX - nodeX)^2 + (playerY - nodeY)^2)
+            if distance < bestDistance then
+              bestDistance = distance
+              bestMatchName = objectName
+              bestX, bestY = nodeX, nodeY
+            end
+          end
+        end
+      end
+    end
+  end
+
+  if bestMatchName and bestDistance < 15 then
+    return bestMatchName, bestX, bestY
+  end
+end
+
 pfQuest:RegisterEvent("QUEST_WATCH_UPDATE")
 pfQuest:RegisterEvent("QUEST_LOG_UPDATE")
 pfQuest:RegisterEvent("QUEST_FINISHED")
@@ -285,7 +325,29 @@ pfQuest:SetScript("OnEvent", function()
     end
   elseif event == "CHAT_MSG_LOOT" then
     local itemId = tonumber(string.match(arg1 or "", "item:(%d+)"))
-    if itemId then pfQuest:NotifyQuestStarters(itemId) end
+    if itemId then
+      pfQuest:NotifyQuestStarters(itemId)
+
+      local zoneID = pfMap:GetMapID(GetCurrentMapContinent(), GetCurrentMapZone())
+      local selfLootPattern = string.gsub(LOOT_ITEM_SELF or "", "%%s", ".+")
+      local isSelfLoot = selfLootPattern ~= "" and string.match(arg1 or "", "^" .. selfLootPattern .. "$")
+      if isSelfLoot then
+        local nodeName, nodeX, nodeY = GetNodeNameAndCoordsFromItemId(itemId)
+
+        if nodeName and nodeX and nodeY and type(zoneID) == "number" and zoneID > 0 then
+          local coordKey = string.format("%.1f|%.1f", nodeX, nodeY)
+          pfQuest_gathers = pfQuest_gathers or {}
+          pfQuest_gathers[zoneID] = pfQuest_gathers[zoneID] or {}
+          local entry = pfQuest_gathers[zoneID][coordKey] or { count = 0, lastSeen = 0, title = nodeName }
+          local now = time()
+          if (now - entry.lastSeen) > 5 then
+            entry.count = entry.count + 1
+          end
+          entry.lastSeen = now
+          pfQuest_gathers[zoneID][coordKey] = entry
+        end
+      end
+    end
   else
     pfQuest.updateQuestLog = true
   end
