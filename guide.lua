@@ -752,3 +752,226 @@ pfGuide:SetScript("OnUpdate", function()
         end
     end
 end)
+--
+--
+--
+---- ============================================================================
+---- SIMULATED DUROTAR MAP WITH FOGCLEAR & PFQUEST PINS (FIXED DEBOUNCE/DELAY)
+---- ============================================================================
+--
+--local DUROTAR_OVERLAYS = {
+--    {"drygulchravine", 427, 78, 210, 160},
+--    {"echoisles", 549, 427, 200, 240},
+--    {"kolkarcrag", 413, 476, 160, 120},
+--    {"orgrimmar", 244, 0, 445, 160},
+--    {"razorhill", 432, 170, 220, 230},
+--    {"razormanegrounds", 301, 189, 230, 230},
+--    {"senjinvillage", 474, 384, 160, 190},
+--    {"skullrock", 464, 33, 128, 110},
+--    {"thunderridge", 327, 60, 190, 200},
+--    {"tiragardekeep", 462, 286, 190, 180},
+--    {"valleyoftrials", 355, 320, 215, 215},
+--}
+--
+--local DUROTAR_ZONE_ID = 14
+--local MAP_SCALE = 0.5 -- 512x384
+--
+---- 1. Главное окно симулированной карты
+--local durotarMap = CreateFrame("Frame", "DurotarMapFrame", UIParent)
+--durotarMap:SetSize(1024 * MAP_SCALE, 768 * MAP_SCALE)
+--durotarMap:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+--durotarMap:SetFrameStrata("HIGH")
+--durotarMap:SetClampedToScreen(true)
+--
+--durotarMap:EnableMouse(true)
+--durotarMap:SetMovable(true)
+--durotarMap:RegisterForDrag("LeftButton")
+--durotarMap:SetScript("OnDragStart", durotarMap.StartMoving)
+--durotarMap:SetScript("OnDragStop", durotarMap.StopMovingOrSizing)
+--
+--durotarMap:SetBackdrop({
+--    bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+--    edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+--    tile = true, tileSize = 16, edgeSize = 16,
+--    insets = { left = 3, right = 3, top = 3, bottom = 3 }
+--})
+--durotarMap:SetBackdropColor(0, 0, 0, 0.85)
+--durotarMap:SetBackdropBorderColor(0.2, 0.8, 1, 1)
+--
+--durotarMap.title = durotarMap:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+--durotarMap.title:SetPoint("TOPLEFT", durotarMap, "TOPLEFT", 10, 18)
+--durotarMap.title:SetText("|cff00ff00[pfQuest]|r Durotar Map (Zone 14)")
+--
+--durotarMap.closeBtn = CreateFrame("Button", nil, durotarMap)
+--durotarMap.closeBtn:SetSize(18, 18)
+--durotarMap.closeBtn:SetPoint("TOPRIGHT", durotarMap, "TOPRIGHT", -5, 18)
+--durotarMap.closeBtn:SetNormalTexture("Interface\\Buttons\\UI-Panel-MinimizeButton-Up")
+--durotarMap.closeBtn:SetPushedTexture("Interface\\Buttons\\UI-Panel-MinimizeButton-Down")
+--durotarMap.closeBtn:SetHighlightTexture("Interface\\Buttons\\UI-Panel-MinimizeButton-Highlight")
+--durotarMap.closeBtn:SetScript("OnClick", function() durotarMap:Hide() end)
+--
+--durotarMap:SetScript("OnMouseDown", function(self, button)
+--    if button == "RightButton" then self:Hide() end
+--end)
+--
+---- 2. Базовые плитки фона (BACKGROUND)
+--for i = 1, 12 do
+--    local col = (i - 1) % 4
+--    local row = math.floor((i - 1) / 4)
+--    local tile = durotarMap:CreateTexture(nil, "BACKGROUND")
+--    tile:SetSize(256 * MAP_SCALE, 256 * MAP_SCALE)
+--    tile:SetTexture("Interface\\WorldMap\\Durotar\\Durotar" .. i)
+--    tile:SetPoint("TOPLEFT", durotarMap, "TOPLEFT", col * 128, -row * 128)
+--end
+--
+---- 3. Оверлеи субзон (ARTWORK)
+--for _, data in ipairs(DUROTAR_OVERLAYS) do
+--    local name, oX, oY, w, h = data[1], data[2], data[3], data[4], data[5]
+--    local numWide = math.ceil(w / 256)
+--    local numTall = math.ceil(h / 256)
+--    local texCount = 1
+--
+--    for j = 1, numTall do
+--        local tileH = (j < numTall) and 256 or (h % 256 == 0 and 256 or h % 256)
+--        local fileH = 16
+--        while fileH < tileH do fileH = fileH * 2 end
+--
+--        for k = 1, numWide do
+--            local tileW = (k < numWide) and 256 or (w % 256 == 0 and 256 or w % 256)
+--            local fileW = 16
+--            while fileW < tileW do fileW = fileW * 2 end
+--
+--            local overlay = durotarMap:CreateTexture(nil, "ARTWORK")
+--            overlay:SetSize(tileW * MAP_SCALE, tileH * MAP_SCALE)
+--            overlay:SetTexCoord(0, tileW / fileW, 0, tileH / fileH)
+--            overlay:SetPoint("TOPLEFT", durotarMap, "TOPLEFT", (oX + 256 * (k - 1)) * MAP_SCALE, -(oY + 256 * (j - 1)) * MAP_SCALE)
+--            overlay:SetTexture("Interface\\WorldMap\\Durotar\\" .. name .. texCount)
+--
+--            texCount = texCount + 1
+--        end
+--    end
+--end
+--
+---- 4. Контейнер для пинов (высокий FrameLevel для кликабельности)
+--durotarMap.nodeLayer = CreateFrame("Frame", nil, durotarMap)
+--durotarMap.nodeLayer:SetAllPoints(durotarMap)
+--durotarMap.nodeLayer:SetFrameLevel(durotarMap:GetFrameLevel() + 10)
+--
+--durotarMap.pins = {}
+--
+---- 5. Метод принудительного заполнения данных pfQuest, если база пустая
+--function durotarMap:EnsureNodesPopulated()
+--    if not pfMap or not pfDatabase then return end
+--
+--    -- Если нодов для зоны 14 еще нет в памяти, принудительно запрашиваем их у pfQuest
+--    local hasNodes = pfMap.nodes and pfMap.nodes["PFQUEST"] and pfMap.nodes["PFQUEST"][DUROTAR_ZONE_ID] and next(pfMap.nodes["PFQUEST"][DUROTAR_ZONE_ID])
+--    if not hasNodes then
+--        local meta = { ["addon"] = "PFQUEST" }
+--        -- Ищем доступные квесты
+--        pfDatabase:SearchQuests(meta)
+--
+--        -- Ищем активные цели квестов из журнала
+--        if pfQuest and pfQuest.questlog then
+--            for qid, qData in pairs(pfQuest.questlog) do
+--                local qmeta = { ["addon"] = "PFQUEST", ["qlogid"] = qData.qlogid }
+--                pfDatabase:SearchQuestID(qid, qmeta)
+--            end
+--        end
+--    end
+--end
+--
+---- 6. Отрисовка пинов
+--function durotarMap:UpdatePfQuestPins()
+--    for _, pin in ipairs(self.pins) do
+--        pin:Hide()
+--    end
+--
+--    if not pfMap or not pfMap.nodes then return end
+--
+--    local pinIndex = 1
+--    local frameW = self:GetWidth()
+--    local frameH = self:GetHeight()
+--
+--    local addons = { "PFQUEST", "PFDB" }
+--
+--    for _, addonName in ipairs(addons) do
+--        if pfMap.nodes[addonName] and pfMap.nodes[addonName][DUROTAR_ZONE_ID] then
+--            for coordsKey, nodeGroup in pairs(pfMap.nodes[addonName][DUROTAR_ZONE_ID]) do
+--                local _, _, strX, strY = string.find(coordsKey, "(.*)|(.*)")
+--                local x = tonumber(strX)
+--                local y = tonumber(strY)
+--
+--                if x and y then
+--                    local pin = self.pins[pinIndex]
+--                    if not pin then
+--                        pin = pfMap:BuildNode("pfDurotarCustomPin" .. pinIndex, self.nodeLayer)
+--                        self.pins[pinIndex] = pin
+--                    end
+--
+--                    pfMap:UpdateNode(pin, nodeGroup, "title", "worldmap")
+--
+--                    local posX = (x / 100) * frameW
+--                    local posY = (y / 100) * frameH
+--
+--                    pin:ClearAllPoints()
+--                    pin:SetPoint("CENTER", self.nodeLayer, "TOPLEFT", posX, -posY)
+--                    pin:Show()
+--
+--                    pinIndex = pinIndex + 1
+--                end
+--            end
+--        end
+--    end
+--end
+--
+---- 7. Таймер задержки для компенсации debounce задержек pfQuest
+--local delayTimer = CreateFrame("Frame")
+--delayTimer:Hide()
+--
+--function durotarMap:ScheduleDeferredUpdate(delay)
+--    delayTimer.elapsed = 0
+--    delayTimer.delay = delay or 0.3
+--    delayTimer:SetScript("OnUpdate", function(self, elapsed)
+--        self.elapsed = self.elapsed + elapsed
+--        if self.elapsed >= self.delay then
+--            self:Hide()
+--            if durotarMap:IsShown() then
+--                durotarMap:EnsureNodesPopulated()
+--                durotarMap:UpdatePfQuestPins()
+--            end
+--        end
+--    end)
+--    delayTimer:Show()
+--end
+--
+---- 8. События и Хуки
+--durotarMap:SetScript("OnShow", function(self)
+--    -- Мгновенное обновление + запуск поиска если нужно
+--    self:EnsureNodesPopulated()
+--    self:UpdatePfQuestPins()
+--
+--    -- Отложенное повторное обновление через 300 мс (снимет проблему первого открытия)
+--    self:ScheduleDeferredUpdate(0.3)
+--end)
+--
+---- ХУК: Когда pfMap пересчитывает ноды карты мира, мы автоматически обновляем карту Дуротара
+--if pfMap and pfMap.UpdateNodes then
+--    hooksecurefunc(pfMap, "UpdateNodes", function()
+--        if durotarMap:IsShown() then
+--            durotarMap:UpdatePfQuestPins()
+--        end
+--    end)
+--end
+--
+---- 9. Слэш-команда
+--SLASH_PFDUROTARMAP1 = "/durotar"
+--SlashCmdList["PFDUROTARMAP"] = function()
+--    if durotarMap:IsShown() then
+--        durotarMap:Hide()
+--    else
+--        durotarMap:Show()
+--    end
+--end
+--
+---- Показать окно
+--durotarMap:Show()
