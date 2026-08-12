@@ -30,7 +30,9 @@ end)
 local controlkey = CreateFrame("Frame", "pfQuestControlKey", UIParent)
 controlkey:SetScript("OnUpdate", function()
     if ( this.throttle or .2) > GetTime() then return else this.throttle = GetTime() + .2 end
-    if WorldMapFrame:IsShown() and MouseIsOver(WorldMapFrame) or MouseIsOver(pfMap.drawlayer) then
+    if (WorldMapFrame:IsShown() and MouseIsOver(WorldMapFrame))
+        or MouseIsOver(pfMap.drawlayer)
+        or (pfQuestMapTracker and pfQuestMapTracker:IsShown() and MouseIsOver(pfQuestMapTracker)) then
         controlkey.pressed = IsControlKeyDown()
     end
 end)
@@ -3456,6 +3458,13 @@ pfMap:SetScript("OnUpdate", function()
     -- update hidecluster detection
     if controlkey.pressed then
         hidecluster = MouseIsOver(WorldMapFrame)
+
+        -- also trigger while hovering the tracker (it overlays the map when open)
+        if not hidecluster and WorldMapFrame:IsShown()
+            and pfQuestMapTracker and pfQuestMapTracker:IsShown()
+            and MouseIsOver(pfQuestMapTracker) then
+            hidecluster = true
+        end
 
         -- Ctrl pressed: show pfQuest quest nodes, hide Blizzard blobs & /db nodes
         if hidecluster and WorldMapFrame:IsShown() and not pfMap.showCustomNodes then
