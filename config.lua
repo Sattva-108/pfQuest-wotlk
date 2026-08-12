@@ -199,6 +199,7 @@ pfQuestConfig:SetScript("OnEvent", function()
     pfQuest_colors = pfQuest_colors or {}
     pfQuest_config = pfQuest_config or {}
     pfQuest_config["ignored_nodes"] = pfQuest_config["ignored_nodes"] or {}
+    pfQuest_config["custom_nodes"] = pfQuest_config["custom_nodes"] or {}
     pfQuest_gathers = pfQuest_gathers or {}
     pfBrowser_fav = pfBrowser_fav or {["units"] = {}, ["objects"] = {}, ["items"] = {}, ["quests"] = {}}
 

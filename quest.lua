@@ -286,6 +286,85 @@ local function GetNodeNameAndCoordsFromItemId(itemId)
   end
 end
 
+local function NodeExistsNearby(nodeName, zoneID, playerX, playerY)
+  local radius = 0.5 -- 0.5% map = ~15 yards
+
+  if pfMap.nodes and pfMap.nodes["PFDB"] and pfMap.nodes["PFDB"][zoneID] then
+    for _, nodeGroup in pairs(pfMap.nodes["PFDB"][zoneID]) do
+      for title, meta in pairs(nodeGroup) do
+        if title == nodeName and meta.x and meta.y then
+          local distance = math.sqrt((playerX - tonumber(meta.x))^2 + (playerY - tonumber(meta.y))^2)
+          if distance <= radius then return true end
+        end
+      end
+    end
+  end
+
+  local objectData = pfDB and pfDB["objects"] and pfDB["objects"]["data"]
+  if objectData and pfDatabase and pfDatabase.GetIDByName then
+    for objectID in pairs(pfDatabase:GetIDByName(nodeName, "objects")) do
+      local data = objectData[objectID]
+      if data and data["coords"] then
+        for _, coord in pairs(data["coords"]) do
+          local nodeX, nodeY, nodeZone = unpack(coord)
+          if nodeZone == zoneID then
+            local distance = math.sqrt((playerX - nodeX)^2 + (playerY - nodeY)^2)
+            if distance <= radius then return true end
+          end
+        end
+      end
+    end
+  end
+end
+
+local function RegisterCustomGatherNode(targetName)
+  local playerX, playerY = GetPlayerMapPosition("player")
+  playerX, playerY = playerX * 100, playerY * 100
+  local zoneID = pfMap:GetMapID(GetCurrentMapContinent(), GetCurrentMapZone())
+  if type(zoneID) ~= "number" or zoneID <= 0 or playerX == 0 or playerY == 0 then return end
+  if NodeExistsNearby(targetName, zoneID, playerX, playerY) then return end
+
+  local x = math.floor(playerX * 10 + .5) / 10
+  local y = math.floor(playerY * 10 + .5) / 10
+  pfQuest_config["custom_nodes"] = pfQuest_config["custom_nodes"] or {}
+  pfQuest_config["custom_nodes"][zoneID] = pfQuest_config["custom_nodes"][zoneID] or {}
+  table.insert(pfQuest_config["custom_nodes"][zoneID], { title = nodeName, x = x, y = y })
+
+  pfMap:AddNode({
+    ["addon"] = "PFDB",
+    ["title"] = nodeName,
+    ["spawn"] = nodeName,
+    ["spawnid"] = 0,
+    ["zone"] = zoneID,
+    ["x"] = x,
+    ["y"] = y,
+    ["spawntype"] = "Object",
+  })
+  pfMap:UpdateNodes()
+  --DEFAULT_CHAT_FRAME:AddMessage("|cff33ffccpfQuest:|r |cff00ff00New resource node discovered!|r [" .. targetName .. "] at (" .. x .. ", " .. y .. ")")
+end
+
+-- Enrich custom node metadata from pfDB (ID, Level, Respawn)
+local function EnrichNodeMeta(meta, nodeName)
+  meta["title"] = nodeName
+  meta["spawn"] = nodeName
+  meta["spawntype"] = "Object"
+
+  if pfDatabase and pfDatabase.GetIDByName then
+    local matches = pfDatabase:GetIDByName(nodeName, "objects")
+    if matches then
+      for objId in pairs(matches) do
+        meta["spawnid"] = objId
+        local skill, caption = pfDatabase:SearchObjectSkill(objId)
+        if skill and caption then
+          meta["level"] = string.format("%s [%s]", skill, caption)
+        end
+        break
+      end
+    end
+  end
+end
+
 pfQuest:RegisterEvent("QUEST_WATCH_UPDATE")
 pfQuest:RegisterEvent("QUEST_LOG_UPDATE")
 pfQuest:RegisterEvent("QUEST_FINISHED")
@@ -294,6 +373,7 @@ pfQuest:RegisterEvent("PLAYER_ENTERING_WORLD")
 pfQuest:RegisterEvent("SKILL_LINES_CHANGED")
 pfQuest:RegisterEvent("ADDON_LOADED")
 pfQuest:RegisterEvent("CHAT_MSG_LOOT")
+pfQuest:RegisterEvent("UNIT_SPELLCAST_SENT")
 pfQuest:SetScript("OnEvent", function()
   if event == "ADDON_LOADED" then
     if arg1 == "pfQuest" or arg1 == "pfQuest-tbc" or arg1 == "pfQuest-wotlk" then
@@ -333,9 +413,29 @@ pfQuest:SetScript("OnEvent", function()
       local isSelfLoot = selfLootPattern ~= "" and string.match(arg1 or "", "^" .. selfLootPattern .. "$")
       if isSelfLoot then
         local nodeName, nodeX, nodeY = GetNodeNameAndCoordsFromItemId(itemId)
+        local pX, pY = GetPlayerMapPosition("player")
+        pX, pY = pX * 100, pY * 100
 
-        if nodeName and nodeX and nodeY and type(zoneID) == "number" and zoneID > 0 then
-          local coordKey = string.format("%.1f|%.1f", nodeX, nodeY)
+        -- Find exact coordinates of an existing node nearby to ensure gather stats key matches
+        local exactX, exactY = nodeX, nodeY
+        if nodeName and type(zoneID) == "number" and zoneID > 0 then
+          if pfMap.nodes and pfMap.nodes["PFDB"] and pfMap.nodes["PFDB"][zoneID] then
+            for coordsKey, nodeGroup in pairs(pfMap.nodes["PFDB"][zoneID]) do
+              for title, meta in pairs(nodeGroup) do
+                if (title == nodeName or meta.spawn == nodeName) and meta.x and meta.y then
+                  local dist = math.sqrt((pX - meta.x)^2 + (pY - meta.y)^2)
+                  if dist <= 0.8 then -- 0.8% map = ~25 yards
+                    exactX, exactY = meta.x, meta.y
+                    break
+                  end
+                end
+              end
+            end
+          end
+        end
+
+        if nodeName and exactX and exactY and type(zoneID) == "number" and zoneID > 0 then
+          local coordKey = string.format("%.1f|%.1f", exactX, exactY)
           pfQuest_gathers = pfQuest_gathers or {}
           pfQuest_gathers[zoneID] = pfQuest_gathers[zoneID] or {}
           local entry = pfQuest_gathers[zoneID][coordKey] or { count = 0, lastSeen = 0, title = nodeName }
@@ -346,6 +446,113 @@ pfQuest:SetScript("OnEvent", function()
           entry.lastSeen = now
           pfQuest_gathers[zoneID][coordKey] = entry
         end
+      end
+    end
+    elseif event == "UNIT_SPELLCAST_SENT" then
+    local unit, targetName, _, spellIdentifier = arg1, arg2, arg3, arg4
+
+    -- Debug: Log ALL SENT events for the player to verify event is firing
+    if unit == "player" then
+      --DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[pfQuest SENT Log]|r Spell: '" .. tostring(spellIdentifier) .. "' | Target: '" .. tostring(targetName) .. "'")
+    end
+
+    if unit ~= "player" then return end
+
+    -- Get spell name from identifier
+    local spellName = type(spellIdentifier) == "number" and GetSpellInfo(spellIdentifier) or spellIdentifier
+    local herbSpellName = GetSpellInfo(2366)
+    local miningSpellName = GetSpellInfo(2575)
+
+    -- Debug: Check spell name matching
+        -- NOTE: In WotLK, arg2 contains spell name, arg4 contains target object
+    local isHerb = (targetName == herbSpellName)
+    local isMine = (targetName == miningSpellName)
+    --DEFAULT_CHAT_FRAME:AddMessage("  |cffFF8800[DEBUG]|r Checking: targetName='" .. tostring(targetName) .. "' vs herb='" .. tostring(herbSpellName) .. "' mining='" .. tostring(miningSpellName) .. "'")
+    -- The actual node/object name is in spellIdentifier (arg4), not targetName (arg2)
+    local nodeName = spellIdentifier
+
+    -- Guarantee nodeName is the object name, not the spell name
+    if nodeName == herbSpellName or nodeName == miningSpellName then
+      nodeName = targetName
+    end
+
+    if isHerb or isMine then
+      --DEFAULT_CHAT_FRAME:AddMessage("  |cff00BFFF[Gather Detected]|r Type: " .. (isHerb and "Herb" or "Mine") .. " | Object: " .. tostring(nodeName))
+
+      -- Debug: Check if target is empty
+      if not targetName or targetName == "" then
+        --DEFAULT_CHAT_FRAME:AddMessage("  |cffFF0000[ERROR]|r Target is EMPTY or NIL!")
+        return
+      end
+
+      -- Debug: Get player position and zone
+      local pX, pY = GetPlayerMapPosition("player")
+      pX, pY = pX * 100, pY * 100
+      local zoneID = pfMap:GetMapID(GetCurrentMapContinent(), GetCurrentMapZone())
+
+      --DEFAULT_CHAT_FRAME:AddMessage("  |cff00BFFF[Position]|r Zone: " .. tostring(zoneID) .. " | Pos: (" .. string.format("%.1f, %.1f", pX, pY) .. ")")
+
+      -- Debug: Check if zone/position are valid
+      if not zoneID or zoneID <= 0 or (pX == 0 and pY == 0) then
+        --DEFAULT_CHAT_FRAME:AddMessage("  |cffFF0000[ERROR]|r Invalid zoneID or zero coordinates!")
+        return
+      end
+
+      -- Debug: Check existing nodes nearby
+      local nodeFoundNearby = false
+      local nearestDist = 99999
+      local nearestName = nil
+
+      if pfMap.nodes and pfMap.nodes["PFDB"] and pfMap.nodes["PFDB"][zoneID] then
+        for coordsKey, nodeGroup in pairs(pfMap.nodes["PFDB"][zoneID]) do
+          for title, meta in pairs(nodeGroup) do
+            if meta.x and meta.y then
+              local dist = math.sqrt((pX - meta.x)^2 + (pY - meta.y)^2)
+              if dist < nearestDist then
+                nearestDist = dist
+                nearestName = title
+              end
+              -- Check same node type (name match) within 0.5% map (~15 yards)
+              if (title == nodeName or meta.spawn == nodeName) and dist <= 0.5 then
+                nodeFoundNearby = true
+              end
+            end
+          end
+        end
+      end
+
+      --DEFAULT_CHAT_FRAME:AddMessage("  |cff00BFFF[Nearby Check]|r Nearest node: " .. tostring(nearestName) .. " (Dist: " .. string.format("%.2f", nearestDist) .. ") | Already exists? " .. tostring(nodeFoundNearby))
+
+      -- Add new node if not found nearby
+      if not nodeFoundNearby then
+        local roundX = math.floor(pX * 10 + 0.5) / 10
+        local roundY = math.floor(pY * 10 + 0.5) / 10
+
+        pfQuest_config["custom_nodes"] = pfQuest_config["custom_nodes"] or {}
+        pfQuest_config["custom_nodes"][zoneID] = pfQuest_config["custom_nodes"][zoneID] or {}
+        table.insert(pfQuest_config["custom_nodes"][zoneID], {
+          title = nodeName,
+          x = roundX,
+          y = roundY
+        })
+
+        local meta = {
+          ["addon"] = "PFDB",
+          ["title"] = nodeName,
+          ["spawn"] = nodeName,
+          ["spawnid"] = 0,
+          ["zone"]  = zoneID,
+          ["x"]     = roundX,
+          ["y"]     = roundY,
+          ["spawntype"] = "Object",
+        }
+        EnrichNodeMeta(meta, nodeName)
+        pfMap:AddNode(meta)
+        pfMap:UpdateNodes()
+
+        --DEFAULT_CHAT_FRAME:AddMessage("  |cff00FF00[SUCCESS]|r NEW NODE ADDED: " .. nodeName .. " at (" .. roundX .. ", " .. roundY .. ")")
+      else
+--        DEFAULT_CHAT_FRAME:AddMessage("  |cffFFFF00[SKIP]|r Node already exists nearby, skipping addition")
       end
     end
   else

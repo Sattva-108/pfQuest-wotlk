@@ -583,10 +583,30 @@ local function AddGatherStatistics(meta, tooltip)
     local zoneID = meta.zone
     local x = tonumber(meta.x)
     local y = tonumber(meta.y)
+    local title = meta.spawn or meta.title
     if not zoneID or not x or not y or not pfQuest_gathers[zoneID] then return end
 
+    local data = nil
+
+    -- 1. Exact key match
     local coordKey = string.format("%.1f|%.1f", x, y)
-    local data = pfQuest_gathers[zoneID][coordKey]
+    data = pfQuest_gathers[zoneID][coordKey]
+
+    -- 2. Fallback: search nearby coordinates within 0.8% map (~25 yards)
+    if not data then
+        for savedKey, savedData in pairs(pfQuest_gathers[zoneID]) do
+            local sX, sY = string.match(savedKey, "(%d+%.?%d*)|(%d+%.?%d*)")
+            if sX and sY then
+                sX, sY = tonumber(sX), tonumber(sY)
+                local dist = math.sqrt((x - sX)^2 + (y - sY)^2)
+                if dist <= 0.8 and (not title or savedData.title == title) then
+                    data = savedData
+                    break
+                end
+            end
+        end
+    end
+
     if data then
         tooltip:AddDoubleLine("Times gathered:", data.count, .8, .8, .8, 1, 1, 1)
         tooltip:AddDoubleLine("Last gathered:", FormatTimeAgo(time() - data.lastSeen), .8, .8, .8, 1, 1, 1)
@@ -1040,6 +1060,52 @@ function pfMap:AddNode(meta)
 
     pfMap.queue_update = GetTime()
 end
+
+function pfMap:LoadCustomUserNodes()
+    if not pfQuest_config or not pfQuest_config["custom_nodes"] then
+        --DEFAULT_CHAT_FRAME:AddMessage("|cff33ffccpfQuest:|r [DEBUG] No custom_nodes found in config")
+        return
+    end
+
+    local count = 0
+    local zones = 0
+    for zoneID, nodeList in pairs(pfQuest_config["custom_nodes"]) do
+        zones = zones + 1
+--        DEFAULT_CHAT_FRAME:AddMessage("|cff33ffccpfQuest:|r [DEBUG] Loading zone " .. tostring(zoneID) .. " with " .. table.getn(nodeList) .. " nodes")
+        for _, node in ipairs(nodeList) do
+            local enrichedMeta = {
+                ["addon"] = "PFDB",
+                ["title"] = node.title,
+                ["spawn"] = node.title,
+                ["spawnid"] = 0,
+                ["zone"] = tonumber(zoneID),
+                ["x"] = node.x,
+                ["y"] = node.y,
+                ["spawntype"] = "Object",
+            }
+            -- Enrich with real object data from pfDB if available
+            if pfDatabase and pfDatabase.GetIDByName then
+                local matches = pfDatabase:GetIDByName(node.title, "objects")
+                if matches then
+                    for objId in pairs(matches) do
+                        enrichedMeta["spawnid"] = objId
+                        local skill, caption = pfDatabase:SearchObjectSkill(objId)
+                        if skill and caption then
+                            enrichedMeta["level"] = string.format("%s [%s]", skill, caption)
+                        end
+                        break
+                    end
+                end
+            end
+            pfMap:AddNode(enrichedMeta)
+            count = count + 1
+            --DEFAULT_CHAT_FRAME:AddMessage("  |cff00BFFF[DEBUG]|r Loaded node: " .. tostring(node.title) .. " at (" .. tostring(node.x) .. ", " .. tostring(node.y) .. ")")
+        end
+    end
+--    DEFAULT_CHAT_FRAME:AddMessage("|cff33ffccpfQuest:|r |cff00ff00Loaded " .. count .. " custom saved nodes from " .. zones .. " zones.|r")
+end
+
+
 
 function pfMap:GetNodes(addon, title)
     local nodes = {}
@@ -2965,6 +3031,10 @@ pfMap:SetScript("OnEvent", function()
                 pfMap.dbNodesRestored = true
                 pfMap.dbRestoreTimer = GetTime() + 3.0
             end
+            if not pfMap.customNodesRestored then
+                pfMap.customNodesRestored = true
+                pfMap.customNodesRestoreTimer = GetTime() + 3.1
+            end
         end
     end
 
@@ -3323,6 +3393,11 @@ pfMap:SetScript("OnUpdate", function()
     if pfMap.dbRestoreTimer and GetTime() > pfMap.dbRestoreTimer then
         pfMap.dbRestoreTimer = nil
         pfMap:RestoreDBNodes()
+    end
+
+        if pfMap.customNodesRestoreTimer and GetTime() > pfMap.customNodesRestoreTimer then
+        pfMap.customNodesRestoreTimer = nil
+        pfMap:LoadCustomUserNodes()
     end
 
     -- Плавная обработка очереди нодов (полностью убирает сильный лаг)
