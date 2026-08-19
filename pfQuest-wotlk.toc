@@ -34,6 +34,9 @@ debug.lua
 pfquest_debug_browser.lua
 init\addon.xml
 xp-per-level.lua
+
+guide-core.lua
 guide.lua
+
 
 guides\1-12_Durotar.lua
