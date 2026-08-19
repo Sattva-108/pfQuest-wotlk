@@ -47,7 +47,7 @@ function pfGuide:ParseGuideText(rawText)
                 else
                     skipStep = false
                     stepCounter = stepCounter + 1
-                    currentStep = { index = stepCounter, elements = {}, gotoPoints = {}, rawLines = { rawLine }, text = "", hasAcceptOrTurnIn = false, hasComplete = false }
+                    currentStep = { index = stepCounter, elements = {}, gotoPoints = {}, rawLines = { rawLine }, text = "", hasAcceptOrTurnIn = false, hasComplete = false, hasVendor = false, hasTrainer = false, hasCollect = false }
                     table.insert(guide.steps, currentStep)
                 end
             elseif not currentStep and line:sub(1, 1) == "#" then
@@ -95,11 +95,24 @@ function pfGuide:ParseGuideText(rawText)
                         elseif directive == "complete" then
                             elem.questId = tonumber(args[1]); elem.objIndex = tonumber(args[2]) or 1; currentStep.hasComplete = true
                         elseif directive == "collect" then
-                            elem.itemId = tonumber(args[1]); elem.qty = tonumber(args[2]) or 1; currentStep.hasComplete = true
+                            elem.itemId = tonumber(args[1])
+                            elem.qty = tonumber(args[2]) or 1
+                            currentStep.hasCollect = true
+                            currentStep.hasComplete = true
+                        elseif directive == "itemcount" then
+                            elem.itemId = tonumber(args[1])
+                            local op, qty = (args[2] or ""):match("([<>]?)(%d+)")
+                            elem.op = op ~= "" and op or ">"
+                            elem.qty = tonumber(qty) or 1
                         elseif directive == "money" then
                             local op, amt = argsStr:match("([<>]?)(%d+%.?%d*)")
                             elem.op = op ~= "" and op or ">"
                             elem.amount = (tonumber(amt) or 0) * 10000
+                        elseif directive == "vendor" then
+                            currentStep.hasVendor = true
+                        elseif directive == "trainer" or directive == "train" then
+                            currentStep.hasTrainer = true
+                            elem.spellId = tonumber(args[1])
                         elseif directive == "itemstat" then
                             elem.slot = tonumber(args[1]) or 16
                             elem.stat = args[2] or "ITEM_MOD_DAMAGE_PER_SECOND_SHORT"
@@ -162,6 +175,11 @@ function pfGuide:SetCurrentGuide(guideName)
     pfGuide.currentStepIndex = 1
     pfGuide.completedLabels = {}
     pfGuide.currentWaypointIndex = 1
+    pfGuide.merchantOpen = false
+    pfGuide.merchantInteracted = false
+    pfGuide.merchantVisited = false
+    pfGuide.trainerVisited = false
+    pfGuide.trainerOpen = false
     pfGuide:FindNearestWaypoint()
     pfGuide:ExecuteCurrentStep()
     pfGuide:UpdateUI()
@@ -214,6 +232,7 @@ function pfGuide:ExecuteCurrentStep()
     local guide = pfGuide.currentGuide
     if not guide or not guide.steps[pfGuide.currentStepIndex] then return end
     local step = guide.steps[pfGuide.currentStepIndex]
+    pfGuide.hasArrivedAtTarget = false
 
     if step.requires and not pfGuide.completedLabels[step.requires] then
         pfGuide:NextStep()
@@ -292,40 +311,90 @@ function pfGuide:CheckStepCompletion()
     if not guide or not guide.steps[pfGuide.currentStepIndex] then return end
     local step = guide.steps[pfGuide.currentStepIndex]
     local isCompleted = true
+    local pendingReason = nil
 
     if step.completeWith and step.completeWith ~= "next" and pfGuide.completedLabels[step.completeWith] then
+        DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00ff00[pfGuide]|r Auto-skip: #completewith label '%s' reached", step.completeWith))
         pfGuide:NextStep()
         return
+    end
+
+    if step.hasVendor and not pfGuide.merchantVisited then
+        isCompleted = false
+        pendingReason = "Waiting for vendor interaction (Talk to NPC and close merchant window)"
+    end
+    if step.hasTrainer and not pfGuide.trainerVisited then
+        isCompleted = false
+        pendingReason = "Waiting for trainer interaction"
     end
 
     for _, elem in ipairs(step.elements) do
         if elem.tag == "itemstat" then
             local currentStat = pfGuide:GetEquippedItemStat(elem.slot, elem.stat)
             if (elem.op == "<" and currentStat >= elem.value) or (elem.op == ">" and currentStat <= elem.value) then
-                pfGuide:NextStep(); return
+                DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00ff00[pfGuide]|r Step skipped: Better gear equipped (Slot %d = %.2f)", elem.slot, currentStat))
+                pfGuide:NextStep()
+                return
             end
         elseif elem.tag == "money" then
             local copper = GetMoney() or 0
-            if elem.op == "<" and copper < elem.amount then
-                pfGuide:NextStep(); return
+            if elem.op == "<" then
+                if step.hasVendor then
+                    if pfGuide.merchantVisited and not pfGuide.merchantOpen and copper < elem.amount then
+                        DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00ff00[pfGuide]|r Step skipped: Insufficient funds after selling (%d / %d copper)", copper, elem.amount))
+                        pfGuide:NextStep()
+                        return
+                    end
+                elseif copper < elem.amount then
+                    DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00ff00[pfGuide]|r Step skipped: Cannot afford item purchase (%d / %d copper)", copper, elem.amount))
+                    pfGuide:NextStep()
+                    return
+                end
             elseif elem.op == ">" and copper < elem.amount then
                 isCompleted = false
+                pendingReason = string.format("Need more money (%d / %d copper)", copper, elem.amount)
             end
         elseif elem.tag == "collect" and elem.itemId then
-            if (GetItemCount(elem.itemId) or 0) < elem.qty then isCompleted = false end
+            local count = GetItemCount(elem.itemId) or 0
+            if count < elem.qty then
+                isCompleted = false
+                pendingReason = string.format("Collecting item %d (%d/%d)", elem.itemId, count, elem.qty)
+            end
+        elseif elem.tag == "itemcount" and elem.itemId then
+            local count = GetItemCount(elem.itemId) or 0
+            if (elem.op == "<" and count >= elem.qty) or (elem.op == ">" and count <= elem.qty) then
+                DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00ff00[pfGuide]|r Step skipped: Item count condition met (%d items)", count))
+                pfGuide:NextStep()
+                return
+            end
         elseif elem.tag == "isonquest" and elem.questId then
-            if not (pfQuest.questlog and pfQuest.questlog[elem.questId]) then pfGuide:NextStep(); return end
+            if not (pfQuest.questlog and pfQuest.questlog[elem.questId]) then
+                pfGuide:NextStep()
+                return
+            end
         elseif elem.tag == "accept" and elem.questId then
-            if not (pfQuest.questlog and pfQuest.questlog[elem.questId]) and not (pfQuest_history and pfQuest_history[elem.questId]) then isCompleted = false end
+            if not (pfQuest.questlog and pfQuest.questlog[elem.questId]) and not (pfQuest_history and pfQuest_history[elem.questId]) then
+                isCompleted = false
+                pendingReason = "Accept quest " .. elem.questId
+            end
         elseif elem.tag == "turnin" and elem.questId then
-            if not (pfQuest_history and pfQuest_history[elem.questId]) then isCompleted = false end
+            if not (pfQuest_history and pfQuest_history[elem.questId]) then
+                isCompleted = false
+                pendingReason = "Turn in quest " .. elem.questId
+            end
         elseif elem.tag == "complete" and elem.questId then
             local qData = pfQuest.questlog and pfQuest.questlog[elem.questId]
             if not qData then
-                if not (pfQuest_history and pfQuest_history[elem.questId]) then isCompleted = false end
+                if not (pfQuest_history and pfQuest_history[elem.questId]) then
+                    isCompleted = false
+                    pendingReason = "Complete quest " .. elem.questId
+                end
             else
                 local _, done = pfGuide:GetObjectiveProgress(elem.questId, elem.objIndex)
-                if not done then isCompleted = false end
+                if not done then
+                    isCompleted = false
+                    pendingReason = "Complete quest objective " .. elem.questId
+                end
             end
         end
     end
@@ -341,6 +410,7 @@ function pfGuide:CheckStepCompletion()
             local dY = (pY - wp.y)
             local mapDist = math.sqrt(dX * dX + dY * dY)
             if mapDist <= math.max((wp.radius or 15) / 15.0, 1.5) then
+                pfGuide.hasArrivedAtTarget = true
                 if pfGuide.currentWaypointIndex < #step.gotoPoints then
                     pfGuide.currentWaypointIndex = pfGuide.currentWaypointIndex + 1
                     pfGuide:ExecuteCurrentStep()
@@ -350,18 +420,30 @@ function pfGuide:CheckStepCompletion()
                 end
             end
         end
-        if not step.hasAcceptOrTurnIn and not step.hasComplete and pfGuide.currentWaypointIndex >= #step.gotoPoints then
+
+        local isPureTravel = not step.hasAcceptOrTurnIn and not step.hasComplete and not step.hasVendor and not step.hasTrainer and not step.hasCollect
+        if isPureTravel and pfGuide.currentWaypointIndex >= #step.gotoPoints then
             local lastWp = step.gotoPoints[#step.gotoPoints]
             local dX = (pX - lastWp.x) * 1.45
             local dY = (pY - lastWp.y)
-            if math.sqrt(dX * dX + dY * dY) > math.max((lastWp.radius or 15) / 15.0, 1.5) then isCompleted = false end
+            if math.sqrt(dX * dX + dY * dY) > math.max((lastWp.radius or 15) / 15.0, 1.5) then
+                isCompleted = false
+                pendingReason = "Travel to waypoint"
+            end
         end
     end
 
     if isCompleted and #step.elements > 0 then
         if step.label then pfGuide.completedLabels[step.label] = true end
+        DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00ff00[pfGuide]|r Step %d completed!", pfGuide.currentStepIndex))
         pfGuide:NextStep()
     else
+        local reason = pendingReason or "No completion condition met"
+        if pfGuide.lastPendingStep ~= pfGuide.currentStepIndex or pfGuide.lastPendingReason ~= reason then
+            print(string.format("[pfGuide Debug] Step %d waiting: %s", pfGuide.currentStepIndex, reason))
+            pfGuide.lastPendingStep = pfGuide.currentStepIndex
+            pfGuide.lastPendingReason = reason
+        end
         pfGuide:UpdateUI()
     end
 end
@@ -372,6 +454,14 @@ function pfGuide:NextStep()
     if pfGuide.currentStepIndex < #guide.steps then
         pfGuide.currentStepIndex = pfGuide.currentStepIndex + 1
         pfGuide.currentWaypointIndex = 1
+        pfGuide.lastPendingStep = nil
+        pfGuide.lastPendingReason = nil
+        pfGuide.merchantInteracted = false
+        pfGuide.merchantVisited = false
+        pfGuide.merchantOpen = false
+        pfGuide.hasArrivedAtTarget = false
+        pfGuide.trainerVisited = false
+        pfGuide.trainerOpen = false
         pfGuide:FindNearestWaypoint()
         pfGuide:ExecuteCurrentStep()
     else
@@ -387,6 +477,13 @@ function pfGuide:PrevStep()
     if pfGuide.currentStepIndex > 1 then
         pfGuide.currentStepIndex = pfGuide.currentStepIndex - 1
         pfGuide.currentWaypointIndex = 1
+        pfGuide.lastPendingStep = nil
+        pfGuide.lastPendingReason = nil
+        pfGuide.merchantVisited = false
+        pfGuide.trainerVisited = false
+        pfGuide.merchantOpen = false
+        pfGuide.trainerOpen = false
+        pfGuide.hasArrivedAtTarget = false
         pfGuide:FindNearestWaypoint()
         pfGuide:ExecuteCurrentStep()
     end
@@ -442,6 +539,11 @@ pfGuide:RegisterEvent("PLAYER_XP_UPDATE")
 pfGuide:RegisterEvent("ZONE_CHANGED")
 pfGuide:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 pfGuide:RegisterEvent("CHAT_MSG_COMBAT_XP_GAIN")
+pfGuide:RegisterEvent("MERCHANT_SHOW")
+pfGuide:RegisterEvent("MERCHANT_CLOSED")
+pfGuide:RegisterEvent("TRAINER_SHOW")
+pfGuide:RegisterEvent("TRAINER_CLOSED")
+pfGuide:RegisterEvent("PLAYER_MONEY")
 
 pfGuide:SetScript("OnEvent", function()
     if event == "PLAYER_ENTERING_WORLD" then
@@ -449,6 +551,31 @@ pfGuide:SetScript("OnEvent", function()
         local def = pfGuide:FindDefaultGuide()
         if def then pfGuide:SetCurrentGuide(def.name) end
         pfQuestGuideWindow:Show()
+    elseif event == "MERCHANT_SHOW" then
+        pfGuide.merchantOpen = true
+        pfGuide.hasArrivedAtTarget = true
+        pfGuide.merchantInteracted = true
+        print(string.format("[pfGuide Debug] MERCHANT_SHOW: Step %d, hasVendor=%s, hasCollect=%s, merchantOpen=%s, merchantInteracted=%s", pfGuide.currentStepIndex or 0, tostring(pfGuide.currentGuide and pfGuide.currentGuide.steps[pfGuide.currentStepIndex] and pfGuide.currentGuide.steps[pfGuide.currentStepIndex].hasVendor), tostring(pfGuide.currentGuide and pfGuide.currentGuide.steps[pfGuide.currentStepIndex] and pfGuide.currentGuide.steps[pfGuide.currentStepIndex].hasCollect), tostring(pfGuide.merchantOpen), tostring(pfGuide.merchantInteracted)))
+    elseif event == "MERCHANT_CLOSED" then
+        pfGuide.merchantOpen = false
+        local guide = pfGuide.currentGuide
+        local step = guide and guide.steps[pfGuide.currentStepIndex]
+        if step and (step.hasVendor or step.hasCollect) then
+            pfGuide.merchantVisited = true
+            DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[pfGuide]|r Merchant closed, checking vendor step completion...")
+            pfGuide:CheckStepCompletion()
+        end
+    elseif event == "TRAINER_SHOW" then
+        pfGuide.trainerOpen = true
+    elseif event == "TRAINER_CLOSED" then
+        pfGuide.trainerOpen = false
+        local guide = pfGuide.currentGuide
+        local step = guide and guide.steps[pfGuide.currentStepIndex]
+        if step and step.hasTrainer then
+            pfGuide.trainerVisited = true
+            DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[pfGuide]|r Trainer closed, advancing step...")
+            pfGuide:NextStep()
+        end
     else
         pfGuide:CheckStepCompletion()
     end
