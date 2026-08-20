@@ -116,6 +116,8 @@ function pfGuide:ParseGuideText(rawText)
                                 elem.amount = (tonumber(amt) or 0) * 10000
                             elseif directive == "vendor" then
                                 currentStep.hasVendor = true
+                            elseif directive == "target" then
+                                elem.target = args[1]
                             elseif directive == "trainer" or directive == "train" then
                                 currentStep.hasTrainer = true
                                 elem.spellId = tonumber(args[1])
@@ -126,6 +128,12 @@ function pfGuide:ParseGuideText(rawText)
                                 elem.op = op ~= "" and op or "<"
                                 elem.value = tonumber(val) or 0
                             elseif directive == "isonquest" then
+                                elem.questId = tonumber(args[1])
+                            elseif directive == "isquestcomplete" then
+                                elem.questId = tonumber(args[1])
+                            elseif directive == "isquestnotcomplete" then
+                                elem.questId = tonumber(args[1])
+                            elseif directive == "isnotonquest" then
                                 elem.questId = tonumber(args[1])
                             end
                             table.insert(currentStep.elements, elem)
@@ -143,7 +151,14 @@ function pfGuide:ParseGuideText(rawText)
 
     local validSteps = {}
     for _, s in ipairs(guide.steps) do
-        if #s.elements > 0 then
+        -- Detect ghost buy-steps: had .collect in raw text but all items filtered out by class/race
+        local hadCollectInRaw = false
+        for _, rawLine in ipairs(s.rawLines or {}) do
+            if rawLine:find("%.collect%s+") then hadCollectInRaw = true; break end
+        end
+        local isGhostBuyStep = hadCollectInRaw and not s.hasCollect and not s.hasAcceptOrTurnIn and not s.hasComplete and not s.hasVendor and not s.hasTrainer
+
+        if #s.elements > 0 and not isGhostBuyStep then
             table.insert(validSteps, s)
             s.index = #validSteps
             s.rawText = table.concat(s.rawLines or {}, "\n")
@@ -265,6 +280,64 @@ function pfGuide:ExecuteCurrentStep()
         pfGuide.currentWaypointIndex = 1
         pfGuide:ExecuteCurrentStep()
         return
+    end
+
+    -- Pre-check conditions to instantly skip steps if requirements are already met or failed
+    for _, elem in ipairs(step.elements) do
+        if elem.tag == "money" then
+            local copper = GetMoney() or 0
+            if elem.op == "<" and copper < elem.amount then
+                pfGuide:NextStep()
+                return
+            end
+        elseif elem.tag == "isquestcomplete" and elem.questId then
+            if not pfGuide:IsQuestComplete(elem.questId) then
+                pfGuide:NextStep()
+                return
+            end
+        elseif elem.tag == "isquestnotcomplete" and elem.questId then
+            if pfGuide:IsQuestComplete(elem.questId) then
+                pfGuide:NextStep()
+                return
+            end
+        elseif elem.tag == "isonquest" and elem.questId then
+            if not (pfQuest.questlog and pfQuest.questlog[elem.questId]) then
+                pfGuide:NextStep()
+                return
+            end
+        elseif elem.tag == "isnotonquest" and elem.questId then
+            if pfQuest.questlog and pfQuest.questlog[elem.questId] then
+                pfGuide:NextStep()
+                return
+            end
+        elseif elem.tag == "itemstat" then
+            local currentStat = pfGuide:GetEquippedItemStat(elem.slot, elem.stat)
+            if (elem.op == "<" and currentStat >= elem.value) or (elem.op == ">" and currentStat <= elem.value) then
+                pfGuide:NextStep()
+                return
+            end
+        elseif elem.tag == "train" and elem.spellId then
+            if IsSpellKnown(elem.spellId) then
+                pfGuide:NextStep()
+                return
+            end
+        end
+    end
+
+    -- Auto-skip ghost steps: all actionable items (.collect, .vendor, etc.) filtered out by class/race conditions
+    local hasAction = step.hasAcceptOrTurnIn or step.hasComplete or step.hasVendor or step.hasTrainer or step.hasCollect
+    if not hasAction and not step.isAmbient and #step.elements > 0 then
+        local isGhostStep = true
+        for _, elem in ipairs(step.elements) do
+            if elem.tag == "accept" or elem.tag == "turnin" or elem.tag == "complete" or elem.tag == "collect" or elem.tag == "vendor" or elem.tag == "trainer" or elem.tag == "train" then
+                isGhostStep = false
+                break
+            end
+        end
+        if isGhostStep then
+            pfGuide:NextStep()
+            return
+        end
     end
 
     local targetFound = false
@@ -394,6 +467,16 @@ function pfGuide:CheckStepCompletion()
     end
 
     for _, elem in ipairs(step.elements) do
+        if elem.tag == "train" and elem.spellId then
+            if not IsSpellKnown(elem.spellId) then
+                isCompleted = false
+                local spellName = GetSpellInfo(elem.spellId) or ("Spell #" .. elem.spellId)
+                pendingReason = "Train " .. spellName
+            end
+        end
+    end
+
+    for _, elem in ipairs(step.elements) do
         if elem.tag == "itemstat" then
             local currentStat = pfGuide:GetEquippedItemStat(elem.slot, elem.stat)
             if (elem.op == "<" and currentStat >= elem.value) or (elem.op == ">" and currentStat <= elem.value) then
@@ -434,6 +517,26 @@ function pfGuide:CheckStepCompletion()
             end
         elseif elem.tag == "isonquest" and elem.questId then
             if not (pfQuest.questlog and pfQuest.questlog[elem.questId]) then
+                pfGuide:NextStep()
+                return
+            end
+        elseif elem.tag == "isquestcomplete" and elem.questId then
+            if not pfGuide:IsQuestComplete(elem.questId) then
+                pfGuide:NextStep()
+                return
+            end
+        elseif elem.tag == "isquestnotcomplete" and elem.questId then
+            if pfGuide:IsQuestComplete(elem.questId) then
+                pfGuide:NextStep()
+                return
+            end
+        elseif elem.tag == "isnotonquest" and elem.questId then
+            if pfQuest.questlog and pfQuest.questlog[elem.questId] then
+                pfGuide:NextStep()
+                return
+            end
+        elseif elem.tag == "train" and elem.spellId then
+            if IsSpellKnown(elem.spellId) then
                 pfGuide:NextStep()
                 return
             end
@@ -584,6 +687,12 @@ function pfGuide:UpdateUI()
             displayText = displayText .. "|cffff5555[*]|r Collect " .. itemName .. string.format(" (%d/%d)", count, elem.qty) .. "\n"
         elseif elem.tag == "goto" and not hasDirectAction and #step.gotoPoints <= 2 then
             displayText = displayText .. "|cff00bfff[>] Travel to:|r " .. string.format("%s (%.1f, %.1f)", elem.zone or "", elem.x or 0, elem.y or 0) .. "\n"
+        elseif elem.tag == "target" and not hasDirectAction then
+            displayText = displayText .. "|cffffff00[Talk]|r " .. (step.text ~= "" and step.text or ("Talk to " .. (elem.target or "NPC"))) .. "\n"
+        elseif elem.tag == "train" or elem.tag == "trainer" then
+            local spellName = (elem.spellId and GetSpellInfo(elem.spellId)) or (elem.text ~= "" and elem.text) or "Class Skills"
+            local isKnown = elem.spellId and IsSpellKnown(elem.spellId)
+            displayText = displayText .. "|cff00ffcc[T] Train:|r " .. spellName .. (isKnown and " |cff00ff00(Done)|r" or "") .. "\n"
         elseif elem.tag == "info" then
             displayText = displayText .. elem.text .. "\n"
         end
@@ -658,8 +767,8 @@ pfGuide:SetScript("OnEvent", function()
         local step = guide and guide.steps[pfGuide.currentStepIndex]
         if step and step.hasTrainer then
             pfGuide.trainerVisited = true
-            DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[pfGuide]|r Trainer closed, advancing step...")
-            pfGuide:NextStep()
+            DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[pfGuide]|r Trainer closed, checking step completion...")
+            pfGuide:CheckStepCompletion()
         end
     else
         pfGuide:CheckStepCompletion()

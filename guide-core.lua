@@ -72,6 +72,25 @@ function pfGuide:GetObjectiveProgress(questId, objIndex)
     return nil, false
 end
 
+function pfGuide:IsQuestComplete(questId)
+    if not questId then return false end
+    if pfQuest_history and pfQuest_history[questId] then return true end
+    local qData = pfQuest.questlog and pfQuest.questlog[questId]
+    if qData and qData.qlogid then
+        local _, _, _, _, _, isComplete = pfQuestCompat.GetQuestLogTitle(qData.qlogid)
+        if isComplete then return true end
+        local numObj = GetNumQuestLeaderBoards(qData.qlogid) or 0
+        if numObj > 0 then
+            for i = 1, numObj do
+                local _, _, done = GetQuestLogLeaderBoard(i, qData.qlogid)
+                if not done then return false end
+            end
+            return true
+        end
+    end
+    return false
+end
+
 function pfGuide:GetDistanceToPoint(pX, pY, targetX, targetY)
     if not pX or not pY or not targetX or not targetY or pX == 0 or pY == 0 then
         return math.huge, math.huge
