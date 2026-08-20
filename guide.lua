@@ -1,4 +1,4 @@
-﻿-- ============================================================================
+-- ============================================================================
 -- ACTIVE GUIDE ENGINE LOGIC (PARSER & STEP MACHINE)
 -- ============================================================================
 
@@ -149,9 +149,9 @@ function pfGuide:ParseGuideText(rawText)
     end
     guide.steps = validSteps
 
-    -- Mark ambient steps (completewith + no goto waypoints)
+    -- Mark ambient steps (all completewith except "next")
     for _, s in ipairs(guide.steps) do
-        if s.completeWith and s.completeWith ~= "next" and #s.gotoPoints == 0 then
+        if s.completeWith and s.completeWith ~= "next" then
             s.isAmbient = true
         end
     end
@@ -471,12 +471,12 @@ function pfGuide:CheckStepCompletion()
             local dX = (pX - wp.x) * 1.45
             local dY = (pY - wp.y)
             local mapDist = math.sqrt(dX * dX + dY * dY)
-            if mapDist <= math.max((wp.radius or 15) / 15.0, 1.5) then
+            if mapDist <= math.max((wp.radius or 15) / 45.0, 0.6) then
                 pfGuide.hasArrivedAtTarget = true
                 if pfGuide.currentWaypointIndex < #step.gotoPoints then
                     pfGuide.currentWaypointIndex = pfGuide.currentWaypointIndex + 1
                     pfGuide:ExecuteCurrentStep()
-                elseif step.isLoop then
+                elseif step.isLoop or step.hasComplete or step.hasCollect then
                     pfGuide.currentWaypointIndex = 1
                     pfGuide:ExecuteCurrentStep()
                 end
@@ -488,7 +488,7 @@ function pfGuide:CheckStepCompletion()
             local lastWp = step.gotoPoints[#step.gotoPoints]
             local dX = (pX - lastWp.x) * 1.45
             local dY = (pY - lastWp.y)
-            if math.sqrt(dX * dX + dY * dY) > math.max((lastWp.radius or 15) / 15.0, 1.5) then
+            if math.sqrt(dX * dX + dY * dY) > math.max((lastWp.radius or 15) / 45.0, 0.6) then
                 isCompleted = false
                 pendingReason = "Travel to waypoint"
             end
