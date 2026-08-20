@@ -50,88 +50,91 @@ function pfGuide:ParseGuideText(rawText)
                     currentStep = { index = stepCounter, elements = {}, gotoPoints = {}, rawLines = { rawLine }, text = "", hasAcceptOrTurnIn = false, hasComplete = false, hasVendor = false, hasTrainer = false, hasCollect = false }
                     table.insert(guide.steps, currentStep)
                 end
-            elseif not currentStep and line:sub(1, 1) == "#" then
-                local tag, val = line:match("^#(%S+)%s*(.*)")
-                tag = string.lower(tag or "")
-                if tag == "name" then guide.name = val
-                elseif tag == "group" then guide.group = val
-                elseif tag == "defaultfor" then guide.defaultFor = val
-                elseif tag == "next" then guide.next = val end
-            elseif currentStep and not skipStep then
-                table.insert(currentStep.rawLines, rawLine)
-                if line:sub(1, 1) == "#" then
-                    local tag, val = line:match("^#(%S+)%s*(.*)")
-                    tag = string.lower(tag or "")
-                    if tag == "season" and (tonumber(val) or 0) ~= pfGuide.gameSeason then
-                        table.remove(guide.steps); stepCounter = stepCounter - 1; currentStep = nil; skipStep = true
-                    elseif tag == "xprate" then
-                        local op, rate = val:match("([<>]?)(%d+%.?%d*)")
-                        rate = tonumber(rate) or 1.0
-                        if (op == "<" and pfGuide.xpRate >= rate) or (op == ">" and pfGuide.xpRate <= rate) then
-                            table.remove(guide.steps); stepCounter = stepCounter - 1; currentStep = nil; skipStep = true
+            elseif not skipStep then
+                -- Universal condition evaluation: if line has << Class/Race, check if it applies
+                local cond = line:match("<<%s*(.+)$")
+                local lineValid = true
+                if cond then
+                    line = line:gsub("%s*<<.*$", ""):gsub("%s+$", "")
+                    lineValid = pfGuide:Applies(cond)
+                end
+
+                if lineValid and line ~= "" then
+                    if not currentStep and line:sub(1, 1) == "#" then
+                        local tag, val = line:match("^#(%S+)%s*(.*)")
+                        tag = string.lower(tag or "")
+                        if tag == "name" then guide.name = val
+                        elseif tag == "group" then guide.group = val
+                        elseif tag == "defaultfor" then guide.defaultFor = val
+                        elseif tag == "next" then guide.next = val end
+                    elseif currentStep then
+                        table.insert(currentStep.rawLines, rawLine)
+                        if line:sub(1, 1) == "#" then
+                            local tag, val = line:match("^#(%S+)%s*(.*)")
+                            tag = string.lower(tag or "")
+                            if tag == "season" and (tonumber(val) or 0) ~= pfGuide.gameSeason then
+                                table.remove(guide.steps); stepCounter = stepCounter - 1; currentStep = nil; skipStep = true
+                            elseif tag == "xprate" then
+                                local op, rate = val:match("([<>]?)(%d+%.?%d*)")
+                                rate = tonumber(rate) or 1.0
+                                if (op == "<" and pfGuide.xpRate >= rate) or (op == ">" and pfGuide.xpRate <= rate) then
+                                    table.remove(guide.steps); stepCounter = stepCounter - 1; currentStep = nil; skipStep = true
+                                end
+                            elseif tag == "label" then currentStep.label = val; guide.labels[val] = currentStep.index
+                            elseif tag == "requires" then currentStep.requires = val
+                            elseif tag == "completewith" then currentStep.completeWith = val
+                            elseif tag == "loop" then currentStep.isLoop = true
+                            elseif tag == "sticky" then currentStep.sticky = true end
+                        elseif line:sub(1, 1) == "." then
+                            local directive, rest = line:match("^%.(%S+)%s*(.*)")
+                            directive = string.lower(directive or "")
+                            local desc = rest:match(">>%s*(.*)")
+                            local argsStr = desc and rest:gsub("%s*>>.*$", "") or rest
+                            local args = {}
+                            for arg in string.gmatch(argsStr, "[^,]+") do table.insert(args, arg:match("^%s*(.-)%s*$")) end
+                            local elem = { tag = directive, args = args, text = desc or "" }
+                            if directive == "goto" then
+                                elem.zone = args[1]; elem.x = tonumber(args[2]); elem.y = tonumber(args[3]); elem.radius = (tonumber(args[4]) and tonumber(args[4]) > 0) and tonumber(args[4]) or 15
+                                table.insert(currentStep.gotoPoints, elem)
+                            elseif directive == "accept" or directive == "turnin" then
+                                elem.questId = tonumber(args[1]); currentStep.hasAcceptOrTurnIn = true
+                            elseif directive == "complete" then
+                                elem.questId = tonumber(args[1]); elem.objIndex = tonumber(args[2]) or 1; currentStep.hasComplete = true
+                            elseif directive == "collect" then
+                                elem.itemId = tonumber(args[1])
+                                elem.qty = tonumber(args[2]) or 1
+                                currentStep.hasCollect = true
+                                currentStep.hasComplete = true
+                            elseif directive == "itemcount" then
+                                elem.itemId = tonumber(args[1])
+                                local op, qty = (args[2] or ""):match("([<>]?)(%d+)")
+                                elem.op = op ~= "" and op or ">"
+                                elem.qty = tonumber(qty) or 1
+                            elseif directive == "money" then
+                                local op, amt = argsStr:match("([<>]?)(%d+%.?%d*)")
+                                elem.op = op ~= "" and op or ">"
+                                elem.amount = (tonumber(amt) or 0) * 10000
+                            elseif directive == "vendor" then
+                                currentStep.hasVendor = true
+                            elseif directive == "trainer" or directive == "train" then
+                                currentStep.hasTrainer = true
+                                elem.spellId = tonumber(args[1])
+                            elseif directive == "itemstat" then
+                                elem.slot = tonumber(args[1]) or 16
+                                elem.stat = args[2] or "ITEM_MOD_DAMAGE_PER_SECOND_SHORT"
+                                local op, val = (args[3] or ""):match("([<>]?)(%d+%.?%d*)")
+                                elem.op = op ~= "" and op or "<"
+                                elem.value = tonumber(val) or 0
+                            elseif directive == "isonquest" then
+                                elem.questId = tonumber(args[1])
+                            end
+                            table.insert(currentStep.elements, elem)
+                            if desc and desc ~= "" and currentStep.text == "" then currentStep.text = desc end
+                        elseif line:sub(1, 1) == "+" or line:sub(1, 1) == "*" then
+                            local text = line:sub(2):match("^%s*(.-)%s*$")
+                            table.insert(currentStep.elements, { tag = "info", text = text })
+                            if currentStep.text == "" then currentStep.text = text end
                         end
-                    elseif tag == "label" then currentStep.label = val; guide.labels[val] = currentStep.index
-                    elseif tag == "requires" then currentStep.requires = val
-                    elseif tag == "completewith" then currentStep.completeWith = val
-                    elseif tag == "loop" then currentStep.isLoop = true
-                    elseif tag == "sticky" then currentStep.sticky = true end
-                elseif line:sub(1, 1) == "." then
-                    local cond = line:match("<<%s*(.+)$")
-                    local valid = true
-                    if cond then line = line:gsub("%s*<<.*$", ""); valid = pfGuide:Applies(cond) end
-                    if valid then
-                        local directive, rest = line:match("^%.(%S+)%s*(.*)")
-                        directive = string.lower(directive or "")
-                        local desc = rest:match(">>%s*(.*)")
-                        local argsStr = desc and rest:gsub("%s*>>.*$", "") or rest
-                        local args = {}
-                        for arg in string.gmatch(argsStr, "[^,]+") do table.insert(args, arg:match("^%s*(.-)%s*$")) end
-                        local elem = { tag = directive, args = args, text = desc or "" }
-                        if directive == "goto" then
-                            elem.zone = args[1]; elem.x = tonumber(args[2]); elem.y = tonumber(args[3]); elem.radius = (tonumber(args[4]) and tonumber(args[4]) > 0) and tonumber(args[4]) or 15
-                            table.insert(currentStep.gotoPoints, elem)
-                        elseif directive == "accept" or directive == "turnin" then
-                            elem.questId = tonumber(args[1]); currentStep.hasAcceptOrTurnIn = true
-                        elseif directive == "complete" then
-                            elem.questId = tonumber(args[1]); elem.objIndex = tonumber(args[2]) or 1; currentStep.hasComplete = true
-                        elseif directive == "collect" then
-                            elem.itemId = tonumber(args[1])
-                            elem.qty = tonumber(args[2]) or 1
-                            currentStep.hasCollect = true
-                            currentStep.hasComplete = true
-                        elseif directive == "itemcount" then
-                            elem.itemId = tonumber(args[1])
-                            local op, qty = (args[2] or ""):match("([<>]?)(%d+)")
-                            elem.op = op ~= "" and op or ">"
-                            elem.qty = tonumber(qty) or 1
-                        elseif directive == "money" then
-                            local op, amt = argsStr:match("([<>]?)(%d+%.?%d*)")
-                            elem.op = op ~= "" and op or ">"
-                            elem.amount = (tonumber(amt) or 0) * 10000
-                        elseif directive == "vendor" then
-                            currentStep.hasVendor = true
-                        elseif directive == "trainer" or directive == "train" then
-                            currentStep.hasTrainer = true
-                            elem.spellId = tonumber(args[1])
-                        elseif directive == "itemstat" then
-                            elem.slot = tonumber(args[1]) or 16
-                            elem.stat = args[2] or "ITEM_MOD_DAMAGE_PER_SECOND_SHORT"
-                            local op, val = (args[3] or ""):match("([<>]?)(%d+%.?%d*)")
-                            elem.op = op ~= "" and op or "<"
-                            elem.value = tonumber(val) or 0
-                        elseif directive == "isonquest" then
-                            elem.questId = tonumber(args[1])
-                        end
-                        table.insert(currentStep.elements, elem)
-                        if desc and desc ~= "" and currentStep.text == "" then currentStep.text = desc end
-                    end
-                elseif line:sub(1, 1) == "+" or line:sub(1, 1) == "*" then
-                    local cond = line:match("<<%s*(.+)$")
-                    if not cond or pfGuide:Applies(cond) then
-                        if cond then line = line:gsub("%s*<<.*$", "") end
-                        local text = line:sub(2):match("^%s*(.-)%s*$")
-                        table.insert(currentStep.elements, { tag = "info", text = text })
-                        if currentStep.text == "" then currentStep.text = text end
                     end
                 end
             end
