@@ -18,6 +18,7 @@ pfGuide.loadedGuides = {}
 pfGuide.currentGuide = nil
 pfGuide.currentStepIndex = 1
 pfGuide.completedLabels = {}
+pfGuide.activePassiveSteps = {}
 pfGuide.currentWaypointIndex = 1
 pfGuide.gameSeason = 0
 pfGuide.xpRate = 1.0

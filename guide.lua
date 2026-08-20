@@ -1,4 +1,4 @@
--- ============================================================================
+﻿-- ============================================================================
 -- ACTIVE GUIDE ENGINE LOGIC (PARSER & STEP MACHINE)
 -- ============================================================================
 
@@ -148,6 +148,14 @@ function pfGuide:ParseGuideText(rawText)
         end
     end
     guide.steps = validSteps
+
+    -- Mark ambient steps (completewith + no goto waypoints)
+    for _, s in ipairs(guide.steps) do
+        if s.completeWith and s.completeWith ~= "next" and #s.gotoPoints == 0 then
+            s.isAmbient = true
+        end
+    end
+
     return guide
 end
 
@@ -174,6 +182,7 @@ function pfGuide:SetCurrentGuide(guideName)
     pfGuide.currentGuideKey = guide.name
     pfGuide.currentStepIndex = 1
     pfGuide.completedLabels = {}
+    pfGuide.activePassiveSteps = {}
     pfGuide.currentWaypointIndex = 1
     pfGuide.merchantOpen = false
     pfGuide.merchantInteracted = false
@@ -236,6 +245,22 @@ function pfGuide:ExecuteCurrentStep()
 
     if step.requires and not pfGuide.completedLabels[step.requires] then
         pfGuide:NextStep()
+        return
+    end
+
+    -- Handle ambient/passive steps: add to background list and advance primary arrow
+    if step.isAmbient then
+        local alreadyTracked = false
+        for _, pStep in ipairs(pfGuide.activePassiveSteps) do
+            if pStep == step then alreadyTracked = true; break end
+        end
+        if not alreadyTracked then
+            table.insert(pfGuide.activePassiveSteps, step)
+            DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[pfGuide]|r Step " .. pfGuide.currentStepIndex .. " added as ambient background task")
+        end
+        pfGuide.currentStepIndex = pfGuide.currentStepIndex + 1
+        pfGuide.currentWaypointIndex = 1
+        pfGuide:ExecuteCurrentStep()
         return
     end
 
@@ -309,6 +334,43 @@ end
 function pfGuide:CheckStepCompletion()
     local guide = pfGuide.currentGuide
     if not guide or not guide.steps[pfGuide.currentStepIndex] then return end
+
+    -- Remove completed ambient steps when reaching their target label
+    local toRemove = {}
+    for i, pStep in ipairs(pfGuide.activePassiveSteps) do
+        if pStep.completeWith and pfGuide.completedLabels[pStep.completeWith] then
+            table.insert(toRemove, i)
+            DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[pfGuide]|r Ambient step removed (label '" .. pStep.completeWith .. "' reached)")
+        else
+            -- Check if ambient step objectives are fully done
+            local allDone = true
+            for _, elem in ipairs(pStep.elements) do
+                if elem.tag == "collect" and elem.itemId then
+                    local count = GetItemCount(elem.itemId) or 0
+                    if count < elem.qty then allDone = false; break end
+                elseif elem.tag == "complete" and elem.questId then
+                    local qData = pfQuest.questlog and pfQuest.questlog[elem.questId]
+                    if qData then
+                        local _, done = pfGuide:GetObjectiveProgress(elem.questId, elem.objIndex)
+                        if not done then allDone = false; break end
+                    else
+                        if not (pfQuest_history and pfQuest_history[elem.questId]) then
+                            allDone = false; break
+                        end
+                    end
+                end
+            end
+            if allDone and #pStep.elements > 0 then
+                table.insert(toRemove, i)
+                DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[pfGuide]|r Ambient step auto-completed (all objectives done)")
+            end
+        end
+    end
+    for j = #toRemove, 1, -1 do
+        table.remove(pfGuide.activePassiveSteps, toRemove[j])
+    end
+
+    -- Handle sticky/completewith for primary step
     local step = guide.steps[pfGuide.currentStepIndex]
     local isCompleted = true
     local pendingReason = nil
@@ -525,6 +587,26 @@ function pfGuide:UpdateUI()
     end
 
     if displayText == "" then displayText = step.text or "Follow navigation arrow." end
+
+    -- Append ambient/passive side tasks
+    if #pfGuide.activePassiveSteps > 0 then
+        displayText = displayText .. "\n---------------------------------"
+        for _, pStep in ipairs(pfGuide.activePassiveSteps) do
+            for _, elem in ipairs(pStep.elements) do
+                if elem.tag == "complete" then
+                    local progText, isDone = pfGuide:GetObjectiveProgress(elem.questId, elem.objIndex)
+                    local title = pfGuide:GetQuestTitle(elem.questId)
+                    local main = (progText and progText ~= "") and progText or title
+                    displayText = displayText .. "\n|cff888888[Side]|r " .. main
+                elseif elem.tag == "collect" then
+                    local count = GetItemCount(elem.itemId) or 0
+                    local itemName = (pfDB and pfDB.items and pfDB.items.loc and pfDB.items.loc[elem.itemId]) or ("Item #" .. elem.itemId)
+                    displayText = displayText .. string.format("\n|cff888888[Side]|r Collect %s (%d/%d)", itemName, count, elem.qty)
+                end
+            end
+        end
+    end
+
     pfQuestGuideWindow.text:SetText(displayText)
     local lineCount = select(2, displayText:gsub("\n", "\n"))
     pfQuestGuideWindow:SetHeight(math.max(65, 34 + lineCount * 14))
