@@ -2,6 +2,22 @@
 -- ACTIVE GUIDE ENGINE LOGIC (PARSER & STEP MACHINE)
 -- ============================================================================
 
+function pfGuide:FormatMoney(copper)
+    copper = tonumber(copper) or 0
+    if copper >= 10000 then
+        local g = math.floor(copper / 10000)
+        local s = math.floor((copper % 10000) / 100)
+        local c = copper % 100
+        return string.format("%dg %ds %dc", g, s, c)
+    elseif copper >= 100 then
+        local s = math.floor(copper / 100)
+        local c = copper % 100
+        return (c > 0) and string.format("%ds %dc", s, c) or string.format("%ds", s)
+    else
+        return string.format("%dc", copper)
+    end
+end
+
 function pfGuide:Applies(conditionStr)
     if not conditionStr or conditionStr == "" then return true end
     local _, pClass = UnitClass("player")
@@ -114,13 +130,19 @@ function pfGuide:ParseGuideText(rawText)
                                 local op, amt = argsStr:match("([<>]?)(%d+%.?%d*)")
                                 elem.op = op ~= "" and op or ">"
                                 elem.amount = (tonumber(amt) or 0) * 10000
+                                currentStep.hasMoney = true
                             elseif directive == "vendor" then
                                 currentStep.hasVendor = true
                             elseif directive == "target" then
                                 elem.target = args[1]
                             elseif directive == "trainer" or directive == "train" then
-                                currentStep.hasTrainer = true
                                 elem.spellId = tonumber(args[1])
+                                elem.flags = tonumber(args[2]) or 0
+                                if elem.flags % 2 == 1 then
+                                    elem.textOnly = true
+                                else
+                                    currentStep.hasTrainer = true
+                                end
                             elseif directive == "itemstat" then
                                 elem.slot = tonumber(args[1]) or 16
                                 elem.stat = args[2] or "ITEM_MOD_DAMAGE_PER_SECOND_SHORT"
@@ -137,17 +159,22 @@ function pfGuide:ParseGuideText(rawText)
                                 elem.questId = tonumber(args[1])
                             elseif directive == "isquestturnedin" then
                                 elem.questId = tonumber(args[1])
+                            elseif directive == "hs" then
+                                currentStep.hasHS = true
+                                currentStep.hasComplete = true
                             elseif directive == "xp" then
                                 elem.rawXp = argsStr
-                                local lvl, xp = argsStr:match("(%d+)%+(%d+)")
-                                if lvl and xp then
-                                    elem.level = tonumber(lvl)
-                                    elem.xp = tonumber(xp)
-                                else
-                                    elem.level = tonumber(argsStr:match("(%d+)")) or 1
-                                    elem.xp = 0
+                                local op, lvl, xp, skip = argsStr:match("([<>]?)(%d+)%+(%d+),?(%d*)")
+                                if not lvl then
+                                    op, lvl, skip = argsStr:match("([<>]?)(%d+),?(%d*)")
                                 end
-                                currentStep.hasComplete = true
+                                elem.op = op ~= "" and op or ">="
+                                elem.level = tonumber(lvl) or 1
+                                elem.xp = tonumber(xp) or 0
+                                elem.isSkipCheck = (tonumber(skip) and tonumber(skip) > 0) or (op == "<") or (op == ">")
+                                if not elem.isSkipCheck then
+                                    currentStep.hasComplete = true
+                                end
                             elseif directive == "deathskip" then
                                 currentStep.hasDeathskip = true
                             elseif directive == "subzoneskip" then
@@ -184,10 +211,13 @@ function pfGuide:ParseGuideText(rawText)
     end
     guide.steps = validSteps
 
-    -- Mark ambient steps (completewith without goto points and without label)
+    -- Mark ambient steps: only side tasks (never .hs, .deathskip, or pure travel)
     for _, s in ipairs(guide.steps) do
-        if s.completeWith and #s.gotoPoints == 0 and not s.label then
+        local isPureTravel = not s.hasAcceptOrTurnIn and not s.hasComplete and not s.hasVendor and not s.hasTrainer and not s.hasCollect and not s.hasHS and not s.hasDeathskip
+        if s.completeWith and s.completeWith ~= "next" and not s.label and not isPureTravel and not s.hasHS and not s.hasDeathskip then
             s.isAmbient = true
+        else
+            s.isAmbient = false
         end
     end
 
@@ -281,10 +311,22 @@ function pfGuide:ExecuteCurrentStep()
     -- Announce step activation
     DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00bfff[pfGuide]|r Activating Step %d/%d (Elements: %d, WPs: %d)", pfGuide.currentStepIndex, #guide.steps, #step.elements, #step.gotoPoints))
 
-    if step.requires and not pfGuide.completedLabels[step.requires] then
-        DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00ff00[pfGuide]|r Step %d skipped: Requires label '%s' (not yet completed)", pfGuide.currentStepIndex, step.requires))
-        pfGuide:NextStep()
-        return
+    -- Register label immediately when step is activated
+    if step.label then
+        pfGuide.completedLabels[step.label] = true
+    end
+
+    if step.requires then
+        local reqIndex = guide.labels[step.requires]
+        if reqIndex and pfGuide.currentStepIndex >= reqIndex then
+            pfGuide.completedLabels[step.requires] = true
+        end
+
+        if not pfGuide.completedLabels[step.requires] then
+            DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00ff00[pfGuide]|r Step %d skipped: Requires label '%s' (not yet reached)", pfGuide.currentStepIndex, step.requires))
+            pfGuide:NextStep()
+            return
+        end
     end
 
     -- Handle ambient/passive steps: add to background list and advance primary arrow
@@ -305,10 +347,17 @@ function pfGuide:ExecuteCurrentStep()
 
     -- Pre-check conditions with chat feedback
     for _, elem in ipairs(step.elements) do
-        if elem.tag == "money" and elem.op == "<" and (GetMoney() or 0) < elem.amount then
-            DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00ff00[pfGuide]|r Step %d skipped: Money condition (< %d copper, current: %d)", pfGuide.currentStepIndex, elem.amount, GetMoney() or 0))
-            pfGuide:NextStep()
-            return
+        if elem.tag == "money" then
+            local copper = GetMoney() or 0
+            if elem.op == "<" and copper < elem.amount then
+                DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00ff00[pfGuide]|r Step %d skipped: Money condition (< %s, current: %s)", pfGuide.currentStepIndex, pfGuide:FormatMoney(elem.amount), pfGuide:FormatMoney(copper)))
+                pfGuide:NextStep()
+                return
+            elseif elem.op == ">" and step.hasVendor and copper >= elem.amount then
+                DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00ff00[pfGuide]|r Step %d skipped: Already have %s (>= %s), bypassing vendor", pfGuide.currentStepIndex, pfGuide:FormatMoney(copper), pfGuide:FormatMoney(elem.amount)))
+                pfGuide:NextStep()
+                return
+            end
         elseif elem.tag == "isquestcomplete" and elem.questId and not pfGuide:IsQuestComplete(elem.questId) then
             DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00ff00[pfGuide]|r Step %d skipped: Quest %d is not complete", pfGuide.currentStepIndex, elem.questId))
             pfGuide:NextStep()
@@ -325,10 +374,23 @@ function pfGuide:ExecuteCurrentStep()
             DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00ff00[pfGuide]|r Step %d skipped: Already on quest %d", pfGuide.currentStepIndex, elem.questId))
             pfGuide:NextStep()
             return
-        elseif elem.tag == "isquestturnedin" and elem.questId and not (pfQuest_history and pfQuest_history[elem.questId]) then
-            DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00ff00[pfGuide]|r Step %d skipped: Quest %d not yet turned in", pfGuide.currentStepIndex, elem.questId))
-            pfGuide:NextStep()
-            return
+        elseif elem.tag == "isquestturnedin" and elem.questId then
+            local hasIncompleteXp = false
+            for _, e in ipairs(step.elements) do
+                if e.tag == "xp" and e.level and e.op ~= "<" then
+                    local pLevel = UnitLevel("player") or 1
+                    local pXp = UnitXP("player") or 0
+                    if pLevel < e.level or (pLevel == e.level and pXp < (e.xp or 0)) then
+                        hasIncompleteXp = true
+                        break
+                    end
+                end
+            end
+            if not hasIncompleteXp and not (pfQuest_history and pfQuest_history[elem.questId]) then
+                DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00ff00[pfGuide]|r Step %d skipped: Quest %d not yet turned in", pfGuide.currentStepIndex, elem.questId))
+                pfGuide:NextStep()
+                return
+            end
         elseif elem.tag == "itemstat" then
             local currentStat = pfGuide:GetEquippedItemStat(elem.slot, elem.stat)
             if (elem.op == "<" and currentStat >= elem.value) or (elem.op == ">" and currentStat <= elem.value) then
@@ -340,22 +402,37 @@ function pfGuide:ExecuteCurrentStep()
             local pLevel = UnitLevel("player") or 1
             local pXp = UnitXP("player") or 0
             local reqXp = elem.xp or 0
-            if pLevel > elem.level or (pLevel == elem.level and pXp >= reqXp) then
-                DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00ff00[pfGuide]|r Grind step %d skipped: Already Lv%d (%d XP >= Lv%d +%d XP)", pfGuide.currentStepIndex, pLevel, pXp, elem.level, reqXp))
-                pfGuide:NextStep()
-                return
+
+            if elem.op == "<" then
+                if pLevel < elem.level or (pLevel == elem.level and pXp < reqXp) then
+                    DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00ff00[pfGuide]|r Step %d skipped: Level below %d", pfGuide.currentStepIndex, elem.level))
+                    pfGuide:NextStep()
+                    return
+                end
+            elseif elem.op == ">" then
+                if pLevel >= elem.level then
+                    DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00ff00[pfGuide]|r Step %d skipped: Level %d or above", pfGuide.currentStepIndex, elem.level))
+                    pfGuide:NextStep()
+                    return
+                end
             else
-                DEFAULT_CHAT_FRAME:AddMessage(string.format("|cffffcc00[pfGuide]|r Grind step %d ACTIVE: Need Lv%d (+%d XP) [Current: Lv%d %d XP]", pfGuide.currentStepIndex, elem.level, reqXp, pLevel, pXp))
+                if pLevel > elem.level or (pLevel == elem.level and pXp >= reqXp) then
+                    DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00ff00[pfGuide]|r Grind step %d skipped: Already Lv%d", pfGuide.currentStepIndex, pLevel))
+                    pfGuide:NextStep()
+                    return
+                else
+                    DEFAULT_CHAT_FRAME:AddMessage(string.format("|cffffcc00[pfGuide]|r Grind step %d ACTIVE: Need Lv%d (+%d XP) [Current: Lv%d %d XP]", pfGuide.currentStepIndex, elem.level, reqXp, pLevel, pXp))
+                end
             end
         end
     end
 
     -- Auto-skip ghost steps: all actionable items (.collect, .vendor, etc.) filtered out by class/race conditions
-    local hasAction = step.hasAcceptOrTurnIn or step.hasComplete or step.hasVendor or step.hasTrainer or step.hasCollect or step.hasDeathskip
+    local hasAction = step.hasAcceptOrTurnIn or step.hasComplete or step.hasVendor or step.hasTrainer or step.hasCollect or step.hasDeathskip or step.hasMoney or (#step.gotoPoints > 0)
     if not hasAction and not step.isAmbient and #step.elements > 0 then
         local isGhostStep = true
         for _, elem in ipairs(step.elements) do
-            if elem.tag == "accept" or elem.tag == "turnin" or elem.tag == "complete" or elem.tag == "collect" or elem.tag == "vendor" or elem.tag == "trainer" or elem.tag == "train" or elem.tag == "deathskip" or elem.tag == "xp" then
+            if elem.tag == "accept" or elem.tag == "turnin" or elem.tag == "complete" or elem.tag == "collect" or elem.tag == "vendor" or elem.tag == "trainer" or elem.tag == "train" or elem.tag == "deathskip" or elem.tag == "xp" or elem.tag == "money" or elem.tag == "goto" then
                 isGhostStep = false
                 break
             end
@@ -488,6 +565,14 @@ function pfGuide:CheckStepCompletion()
                             allDone = false; break
                         end
                     end
+                elseif elem.tag == "xp" and elem.level and not elem.isSkipCheck then
+                    local pLevel = UnitLevel("player") or 1
+                    local pXp = UnitXP("player") or 0
+                    local reqXp = elem.xp or 0
+                    if pLevel < elem.level or (pLevel == elem.level and pXp < reqXp) then
+                        allDone = false
+                        break
+                    end
                 end
             end
             if allDone and #pStep.elements > 0 then
@@ -553,9 +638,11 @@ function pfGuide:CheckStepCompletion()
                     pfGuide:NextStep()
                     return
                 end
-            elseif elem.op == ">" and copper < elem.amount then
-                isCompleted = false
-                pendingReason = string.format("Need more money (%d / %d copper)", copper, elem.amount)
+            elseif elem.op == ">" then
+                if not step.hasVendor and copper < elem.amount then
+                    isCompleted = false
+                    pendingReason = string.format("Need more money (%s / %s)", pfGuide:FormatMoney(copper), pfGuide:FormatMoney(elem.amount))
+                end
             end
         elseif elem.tag == "collect" and elem.itemId then
             local count = GetItemCount(elem.itemId) or 0
@@ -591,17 +678,28 @@ function pfGuide:CheckStepCompletion()
                 return
             end
         elseif elem.tag == "isquestturnedin" and elem.questId then
-            if not (pfQuest_history and pfQuest_history[elem.questId]) then
+            local xpFulfilled = false
+            for _, e in ipairs(step.elements) do
+                if e.tag == "xp" and e.level and e.op ~= "<" then
+                    local pLevel = UnitLevel("player") or 1
+                    local pXp = UnitXP("player") or 0
+                    if pLevel > e.level or (pLevel == e.level and pXp >= (e.xp or 0)) then
+                        xpFulfilled = true
+                        break
+                    end
+                end
+            end
+            if not xpFulfilled and not (pfQuest_history and pfQuest_history[elem.questId]) then
                 isCompleted = false
                 pendingReason = "Requires quest " .. elem.questId .. " turned in"
             end
-        elseif elem.tag == "train" and elem.spellId then
+        elseif elem.tag == "train" and elem.spellId and not elem.textOnly then
             if not IsSpellKnown(elem.spellId) then
                 isCompleted = false
                 local spellName = GetSpellInfo(elem.spellId) or ("Spell #" .. elem.spellId)
                 pendingReason = "Train " .. spellName
             end
-        elseif elem.tag == "xp" and elem.level and elem.op ~= "<" then
+        elseif elem.tag == "xp" and elem.level and not elem.isSkipCheck then
             local pLevel = UnitLevel("player") or 1
             local pXp = UnitXP("player") or 0
             local reqXp = elem.xp or 0
@@ -620,6 +718,11 @@ function pfGuide:CheckStepCompletion()
             if subzone ~= "" then
                 isCompleted = false
                 pendingReason = "Leave area: " .. subzone
+            end
+        elseif elem.tag == "hs" then
+            if not pfGuide.hearthstoneUsed then
+                isCompleted = false
+                pendingReason = "Use Hearthstone"
             end
         elseif elem.tag == "accept" and elem.questId then
             if not (pfQuest.questlog and pfQuest.questlog[elem.questId]) and not (pfQuest_history and pfQuest_history[elem.questId]) then
@@ -711,6 +814,7 @@ function pfGuide:NextStep()
         pfGuide.hasArrivedAtTarget = false
         pfGuide.trainerVisited = false
         pfGuide.trainerOpen = false
+        pfGuide.hearthstoneUsed = false
 
         -- Complete any ambient tasks with completeWith == "next"
         local toRemove = {}
@@ -786,12 +890,19 @@ function pfGuide:UpdateUI()
             local spellName = (elem.spellId and GetSpellInfo(elem.spellId)) or (elem.text ~= "" and elem.text) or "Class Skills"
             local isKnown = elem.spellId and IsSpellKnown(elem.spellId)
             displayText = displayText .. "|cff00ffcc[T] Train:|r " .. spellName .. (isKnown and " |cff00ff00(Done)|r" or "") .. "\n"
-        elseif elem.tag == "xp" then
+        elseif elem.tag == "vendor" then
+            displayText = displayText .. "|cffffff00[Vendor]|r " .. (step.text ~= "" and step.text or "Sell Junk / Vendor Trash") .. "\n"
+        elseif elem.tag == "money" and elem.op == ">" and not step.hasVendor then
+            local copper = GetMoney() or 0
+            displayText = displayText .. string.format("|cffff5555[*]|r Farm %s from mobs (Current: %s)\n", pfGuide:FormatMoney(elem.amount), pfGuide:FormatMoney(copper))
+        elseif elem.tag == "xp" and not elem.isSkipCheck then
             local pLevel = UnitLevel("player") or 1
             local pXp = UnitXP("player") or 0
             displayText = displayText .. string.format("|cffff5555[*]|r Grind to Lv %d (+%d XP) [%d/%d]\n", elem.level, elem.xp or 0, pXp, elem.xp or 0)
         elseif elem.tag == "deathskip" then
             displayText = displayText .. "|cffff0000[Death]|r " .. (step.text ~= "" and step.text or "Die and respawn at Spirit Healer") .. "\n"
+        elseif elem.tag == "hs" then
+            displayText = displayText .. "|cff00ccff[HS]|r " .. (step.text ~= "" and step.text or "Use Hearthstone") .. "\n"
         elseif elem.tag == "info" then
             displayText = displayText .. elem.text .. "\n"
         end
@@ -813,6 +924,11 @@ function pfGuide:UpdateUI()
                     local count = GetItemCount(elem.itemId) or 0
                     local itemName = (pfDB and pfDB.items and pfDB.items.loc and pfDB.items.loc[elem.itemId]) or ("Item #" .. elem.itemId)
                     displayText = displayText .. string.format("\n|cff888888[Side]|r Collect %s (%d/%d)", itemName, count, elem.qty)
+                elseif elem.tag == "xp" and elem.level and not elem.isSkipCheck then
+                    local pLevel = UnitLevel("player") or 1
+                    local pXp = UnitXP("player") or 0
+                    local reqXp = elem.xp or 0
+                    displayText = displayText .. string.format("\n|cff888888[Side]|r Grind to Lv %d (+%d XP) [%d/%d]", elem.level, reqXp, pXp, reqXp)
                 end
             end
         end
@@ -837,6 +953,7 @@ pfGuide:RegisterEvent("MERCHANT_CLOSED")
 pfGuide:RegisterEvent("TRAINER_SHOW")
 pfGuide:RegisterEvent("TRAINER_CLOSED")
 pfGuide:RegisterEvent("PLAYER_MONEY")
+pfGuide:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
 
 pfGuide:SetScript("OnEvent", function()
     if event == "PLAYER_ENTERING_WORLD" then
@@ -867,6 +984,15 @@ pfGuide:SetScript("OnEvent", function()
         if step and step.hasTrainer then
             pfGuide.trainerVisited = true
             DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[pfGuide]|r Trainer closed, checking step completion...")
+            pfGuide:CheckStepCompletion()
+        end
+    elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
+        local unit, spellName = arg1, arg2
+        local hsName = GetSpellInfo(8690) or "Hearthstone"
+        local arName = GetSpellInfo(556) or "Astral Recall"
+        if unit == "player" and (spellName == hsName or spellName == arName) then
+            pfGuide.hearthstoneUsed = true
+            DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[pfGuide]|r Hearthstone cast succeeded!")
             pfGuide:CheckStepCompletion()
         end
     else
