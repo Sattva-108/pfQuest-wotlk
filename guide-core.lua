@@ -166,13 +166,30 @@ pfGuideWindow.prevBtn = CreateFrame("Button", nil, pfGuideWindow, "UIPanelButton
 pfGuideWindow.prevBtn:SetSize(20, 18)
 pfGuideWindow.prevBtn:SetPoint("TOPRIGHT", pfGuideWindow, "TOPRIGHT", -26, -4)
 pfGuideWindow.prevBtn:SetText("<")
-pfGuideWindow.prevBtn:SetScript("OnClick", function() pfGuide:PrevStep() end)
+pfGuideWindow.prevBtn:RegisterForClicks("LeftButtonUp")
+pfGuideWindow.prevBtn:SetScript("OnClick", function()
+    pfGuide:PrevStep()
+end)
 
 pfGuideWindow.nextBtn = CreateFrame("Button", nil, pfGuideWindow, "UIPanelButtonTemplate")
 pfGuideWindow.nextBtn:SetSize(20, 18)
 pfGuideWindow.nextBtn:SetPoint("TOPRIGHT", pfGuideWindow, "TOPRIGHT", -4, -4)
 pfGuideWindow.nextBtn:SetText(">")
-pfGuideWindow.nextBtn:SetScript("OnClick", function() pfGuide:NextStep() end)
+pfGuideWindow.nextBtn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+pfGuideWindow.nextBtn:SetScript("OnClick", function(self, button)
+    if button == "RightButton" then
+        if pfGuide.currentGuide then
+            pfGuide.currentStepIndex = pfGuide:FindFurthestActiveStep(pfGuide.currentGuide)
+            pfGuide.furthestStepIndex = pfGuide.currentStepIndex
+            DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00ff00[pfGuide]|r Fast-Forwarded to Step %d/%d", pfGuide.currentStepIndex, #pfGuide.currentGuide.steps))
+            pfGuide:FindNearestWaypoint()
+            pfGuide:ExecuteCurrentStep()
+            pfGuide:UpdateUI()
+        end
+    else
+        pfGuide:NextStep(true)
+    end
+end)
 
 pfGuideWindow.debugBtn = CreateFrame("Button", nil, pfGuideWindow, "UIPanelButtonTemplate")
 pfGuideWindow.debugBtn:SetSize(20, 18)

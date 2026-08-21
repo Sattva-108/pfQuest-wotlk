@@ -376,6 +376,7 @@ function pfGuide:SetCurrentGuide(guideName)
     pfGuide.hearthstoneUsed = false
 
     pfGuide.currentStepIndex = pfGuide:FindFurthestActiveStep(guide)
+    pfGuide.furthestStepIndex = pfGuide.currentStepIndex
     for i = 1, pfGuide.currentStepIndex - 1 do
         local step = guide.steps[i]
         if step.label then
@@ -431,7 +432,7 @@ local function GetNearestCoord(coordsList)
     return best
 end
 
-function pfGuide:ExecuteCurrentStep()
+function pfGuide:ExecuteCurrentStep(isManual)
     local guide = pfGuide.currentGuide
     if not guide or not guide.steps[pfGuide.currentStepIndex] then return end
     local step = guide.steps[pfGuide.currentStepIndex]
@@ -445,7 +446,9 @@ function pfGuide:ExecuteCurrentStep()
         pfGuide.completedLabels[step.label] = true
     end
 
-    if step.requires then
+    local canAutoSkip = not isManual and (pfGuide.currentStepIndex >= (pfGuide.furthestStepIndex or 1))
+
+    if canAutoSkip and step.requires then
         local reqIndex = guide.labels[step.requires]
         if reqIndex and pfGuide.currentStepIndex >= reqIndex then
             pfGuide.completedLabels[step.requires] = true
@@ -459,7 +462,7 @@ function pfGuide:ExecuteCurrentStep()
     end
 
     -- Handle ambient/passive steps: add to background list and advance primary arrow
-    if step.isAmbient then
+    if canAutoSkip and step.isAmbient then
         local alreadyTracked = false
         for _, pStep in ipairs(pfGuide.activePassiveSteps) do
             if pStep == step then alreadyTracked = true; break end
@@ -475,6 +478,7 @@ function pfGuide:ExecuteCurrentStep()
     end
 
     -- Pre-check conditions with chat feedback
+    if canAutoSkip then
     for _, elem in ipairs(step.elements) do
         if elem.tag == "money" then
             local copper = GetMoney() or 0
@@ -555,10 +559,11 @@ function pfGuide:ExecuteCurrentStep()
             end
         end
     end
+    end
 
     -- Auto-skip ghost steps: all actionable items (.collect, .vendor, etc.) filtered out by class/race conditions
     local hasAction = step.hasAcceptOrTurnIn or step.hasComplete or step.hasVendor or step.hasTrainer or step.hasCollect or step.hasDeathskip or step.hasMoney or (#step.gotoPoints > 0)
-    if not hasAction and not step.isAmbient and #step.elements > 0 then
+    if canAutoSkip and not hasAction and not step.isAmbient and #step.elements > 0 then
         local isGhostStep = true
         for _, elem in ipairs(step.elements) do
             if elem.tag == "accept" or elem.tag == "turnin" or elem.tag == "complete" or elem.tag == "collect" or elem.tag == "vendor" or elem.tag == "trainer" or elem.tag == "train" or elem.tag == "deathskip" or elem.tag == "xp" or elem.tag == "money" or elem.tag == "goto" then
@@ -670,6 +675,9 @@ end
 function pfGuide:CheckStepCompletion()
     local guide = pfGuide.currentGuide
     if not guide or not guide.steps[pfGuide.currentStepIndex] then return end
+    if pfGuide.currentStepIndex < (pfGuide.furthestStepIndex or 1) then
+        return
+    end
 
     -- Remove completed ambient steps when reaching their target label
     local toRemove = {}
@@ -916,6 +924,7 @@ function pfGuide:CheckStepCompletion()
 
     if isCompleted and #step.elements > 0 then
         if step.label then pfGuide.completedLabels[step.label] = true end
+        pfGuide.furthestStepIndex = math.max(pfGuide.furthestStepIndex or 1, pfGuide.currentStepIndex + 1)
         DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00ff00[pfGuide]|r Step %d completed!", pfGuide.currentStepIndex))
         pfGuide:NextStep()
     else
@@ -929,11 +938,14 @@ function pfGuide:CheckStepCompletion()
     end
 end
 
-function pfGuide:NextStep()
+function pfGuide:NextStep(isManual)
     local guide = pfGuide.currentGuide
     if not guide then return end
     if pfGuide.currentStepIndex < #guide.steps then
         pfGuide.currentStepIndex = pfGuide.currentStepIndex + 1
+        if not isManual or pfGuide.currentStepIndex > (pfGuide.furthestStepIndex or 1) then
+            pfGuide.furthestStepIndex = pfGuide.currentStepIndex
+        end
         pfGuide.currentWaypointIndex = 1
         pfGuide.lastPendingStep = nil
         pfGuide.lastPendingReason = nil
@@ -958,6 +970,7 @@ function pfGuide:NextStep()
 
         pfGuide:FindNearestWaypoint()
         pfGuide:ExecuteCurrentStep()
+        pfGuide:UpdateUI()
     else
         if guide.next and pfGuide.loadedGuides[guide.next] then
             pfGuide:SetCurrentGuide(guide.next)
@@ -979,7 +992,8 @@ function pfGuide:PrevStep()
         pfGuide.trainerOpen = false
         pfGuide.hasArrivedAtTarget = false
         pfGuide:FindNearestWaypoint()
-        pfGuide:ExecuteCurrentStep()
+        pfGuide:ExecuteCurrentStep(true)
+        pfGuide:UpdateUI()
     end
 end
 
