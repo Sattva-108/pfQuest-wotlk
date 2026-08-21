@@ -380,6 +380,7 @@ function pfGuide:SetCurrentGuide(guideName)
     pfGuide.trainerVisited = false
     pfGuide.trainerOpen = false
     pfGuide.hearthstoneUsed = false
+    pfGuide.deathskipDone = false
 
     pfGuide.currentStepIndex = pfGuide:FindFurthestActiveStep(guide)
     pfGuide.furthestStepIndex = pfGuide.currentStepIndex
@@ -442,6 +443,10 @@ function pfGuide:ExecuteCurrentStep(isManual)
     local guide = pfGuide.currentGuide
     if not guide or not guide.steps[pfGuide.currentStepIndex] then return end
     local step = guide.steps[pfGuide.currentStepIndex]
+    if pfGuide.deathskipStateStep ~= pfGuide.currentStepIndex then
+        pfGuide.deathskipStateStep = pfGuide.currentStepIndex
+        pfGuide.deathskipDone = false
+    end
     pfGuide.hasArrivedAtTarget = false
 
     -- Announce step activation only once per step.
@@ -860,8 +865,7 @@ function pfGuide:CheckStepCompletion()
                 pendingReason = string.format("Grind XP: Lv%d (+%d XP) [%d/%d]", elem.level, reqXp, pXp, reqXp)
             end
         elseif elem.tag == "deathskip" then
-            local isGhost = UnitIsDeadOrGhost("player")
-            if not isGhost then
+            if not pfGuide.deathskipDone then
                 isCompleted = false
                 pendingReason = "Die and respawn at Spirit Healer"
             end
@@ -945,7 +949,7 @@ function pfGuide:CheckStepCompletion()
             end
         end
 
-        local isPureTravel = not step.hasAcceptOrTurnIn and not step.hasComplete and not step.hasVendor and not step.hasTrainer and not step.hasCollect
+        local isPureTravel = not step.hasAcceptOrTurnIn and not step.hasComplete and not step.hasVendor and not step.hasTrainer and not step.hasCollect and not (step.hasDeathskip and pfGuide.deathskipDone)
         if isPureTravel and pfGuide.currentWaypointIndex >= #step.gotoPoints then
             local lastWp = step.gotoPoints[#step.gotoPoints]
             local dX = (pX - lastWp.x) * 1.45
@@ -991,6 +995,7 @@ function pfGuide:NextStep(isManual)
         pfGuide.trainerVisited = false
         pfGuide.trainerOpen = false
         pfGuide.hearthstoneUsed = false
+        pfGuide.deathskipDone = false
 
         -- Complete any ambient tasks with completeWith == "next"
         local toRemove = {}
@@ -1132,6 +1137,9 @@ pfGuide:RegisterEvent("TRAINER_SHOW")
 pfGuide:RegisterEvent("TRAINER_CLOSED")
 pfGuide:RegisterEvent("PLAYER_MONEY")
 pfGuide:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
+pfGuide:RegisterEvent("CONFIRM_XP_LOSS")
+pfGuide:RegisterEvent("PLAYER_UNGHOST")
+pfGuide:RegisterEvent("PLAYER_DEAD")
 
 pfGuide:SetScript("OnEvent", function()
     if event == "PLAYER_ENTERING_WORLD" then
@@ -1177,6 +1185,19 @@ pfGuide:SetScript("OnEvent", function()
         if unit == "player" and (spellName == hsName or spellName == arName) then
             pfGuide.hearthstoneUsed = true
             DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[pfGuide]|r Hearthstone cast succeeded!")
+            pfGuide:CheckStepCompletion()
+        end
+    elseif event == "CONFIRM_XP_LOSS" or event == "PLAYER_UNGHOST" then
+        local guide = pfGuide.currentGuide
+        local step = guide and guide.steps[pfGuide.currentStepIndex]
+        if step and step.hasDeathskip and not pfGuide.deathskipDone then
+            pfGuide.deathskipDone = true
+            DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[pfGuide]|r Spirit Healer resurrection confirmed!")
+            if AcceptXPLoss then
+                AcceptXPLoss()
+                if StaticPopup1 and StaticPopup1:IsShown() then StaticPopup1:Hide() end
+                if StaticPopup2 and StaticPopup2:IsShown() then StaticPopup2:Hide() end
+            end
             pfGuide:CheckStepCompletion()
         end
     else
