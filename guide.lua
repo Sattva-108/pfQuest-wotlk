@@ -240,12 +240,131 @@ function pfGuide:FindDefaultGuide()
     return nil
 end
 
+function pfGuide:FindFurthestActiveStep(guide)
+    if not guide or not guide.steps or #guide.steps == 0 then return 1 end
+
+    local activeIndex = #guide.steps
+    local activeReason = "End of guide"
+    DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00bfff[pfGuide FF]|r Starting Fast-Forward scan for guide: %s (%d steps)...", guide.name, #guide.steps))
+
+    for i, step in ipairs(guide.steps) do
+        local isStepPassed = true
+        local hasQuestAction = false
+        local unfinishedReason
+        local stepDebugInfo = ""
+
+        -- Evaluate quest and action elements in sequence.
+        for _, elem in ipairs(step.elements or {}) do
+            if elem.tag == "turnin" and elem.questId then
+                hasQuestAction = true
+                local turnedIn = pfQuest_history and pfQuest_history[elem.questId]
+                stepDebugInfo = string.format("TurnIn Q#%d (%s)", elem.questId, turnedIn and "TURNED_IN" or "NOT_TURNED_IN")
+                if not turnedIn then
+                    isStepPassed = false
+                    unfinishedReason = "Need to turn in quest " .. elem.questId .. " (" .. pfGuide:GetQuestTitle(elem.questId) .. ")"
+                    break
+                end
+            elseif elem.tag == "complete" and elem.questId then
+                hasQuestAction = true
+                local onQuest = pfQuest.questlog and pfQuest.questlog[elem.questId]
+                local turnedIn = pfQuest_history and pfQuest_history[elem.questId]
+                local isComplete = onQuest and pfGuide:IsQuestComplete(elem.questId)
+                stepDebugInfo = string.format("Complete Q#%d (%s)", elem.questId, turnedIn and "TURNED_IN" or (isComplete and "OBJ_DONE" or (onQuest and "OBJ_INCOMPLETE" or "NOT_IN_LOG")))
+                if onQuest and not isComplete then
+                    isStepPassed = false
+                    unfinishedReason = "Incomplete quest objective: " .. pfGuide:GetQuestTitle(elem.questId)
+                    break
+                elseif not onQuest and not turnedIn then
+                    isStepPassed = false
+                    unfinishedReason = "Upcoming quest not yet accepted: " .. pfGuide:GetQuestTitle(elem.questId)
+                    break
+                end
+            elseif elem.tag == "accept" and elem.questId then
+                hasQuestAction = true
+                local onQuest = pfQuest.questlog and pfQuest.questlog[elem.questId]
+                local turnedIn = pfQuest_history and pfQuest_history[elem.questId]
+                stepDebugInfo = string.format("Accept Q#%d (%s)", elem.questId, turnedIn and "TURNED_IN" or (onQuest and "ON_QUEST" or "NOT_ACCEPTED"))
+                if not onQuest and not turnedIn then
+                    isStepPassed = false
+                    unfinishedReason = "Need to accept quest " .. elem.questId .. " (" .. pfGuide:GetQuestTitle(elem.questId) .. ")"
+                    break
+                end
+            elseif elem.tag == "collect" and elem.itemId then
+                hasQuestAction = true
+                local count = GetItemCount(elem.itemId) or 0
+                stepDebugInfo = string.format("Collect Item#%d (%d/%d)", elem.itemId, count, elem.qty or 1)
+                if count < (elem.qty or 1) then
+                    isStepPassed = false
+                    unfinishedReason = "Need to collect item #" .. elem.itemId .. string.format(" (%d/%d)", count, elem.qty or 1)
+                    break
+                end
+            elseif elem.tag == "train" and elem.spellId and not elem.textOnly then
+                hasQuestAction = true
+                local isKnown = IsSpellKnown(elem.spellId)
+                stepDebugInfo = string.format("Train Spell#%d (%s)", elem.spellId, isKnown and "KNOWN" or "NOT_KNOWN")
+                if not isKnown then
+                    isStepPassed = false
+                    unfinishedReason = "Need to train spell #" .. elem.spellId
+                    break
+                end
+            elseif elem.tag == "xp" and elem.level and elem.op ~= "<" and not elem.isSkipCheck then
+                hasQuestAction = true
+                local pLevel = UnitLevel("player") or 1
+                local pXp = UnitXP("player") or 0
+                local reqXp = elem.xp or 0
+                local reqMet = pLevel > elem.level or (pLevel == elem.level and pXp >= reqXp)
+                stepDebugInfo = string.format("Grind Lv%d (+%d XP) [Current: Lv%d %d XP -> %s]", elem.level, reqXp, pLevel, pXp, reqMet and "MET" or "NOT_MET")
+                if not reqMet then
+                    isStepPassed = false
+                    unfinishedReason = string.format("Grind required: Lv%d (+%d XP)", elem.level, reqXp)
+                    break
+                end
+            end
+        end
+
+        -- Resolve pure travel, vendor, deathskip, and hearthstone steps from nearby quests.
+        if not hasQuestAction then
+            local upcomingQuestsTurnedIn = false
+            local nextQuestChecked = "None"
+            for k = i + 1, math.min(i + 8, #guide.steps) do
+                for _, nextElem in ipairs(guide.steps[k].elements or {}) do
+                    if (nextElem.tag == "turnin" or nextElem.tag == "complete" or nextElem.tag == "accept") and nextElem.questId then
+                        nextQuestChecked = string.format("Q#%d", nextElem.questId)
+                        if pfQuest_history and pfQuest_history[nextElem.questId] then
+                            upcomingQuestsTurnedIn = true
+                            break
+                        end
+                    end
+                end
+                if upcomingQuestsTurnedIn then break end
+            end
+
+            stepDebugInfo = string.format("Travel/Vendor step (Upcoming %s %s)", nextQuestChecked, upcomingQuestsTurnedIn and "TURNED_IN" or "NOT_TURNED_IN")
+            if not upcomingQuestsTurnedIn then
+                isStepPassed = false
+                unfinishedReason = (step.text ~= "" and step.text) or "Travel / Navigation step"
+            end
+        end
+
+        if not isStepPassed then
+            activeIndex = i
+            activeReason = unfinishedReason or "Active step"
+            DEFAULT_CHAT_FRAME:AddMessage(string.format("|cffffcc00[pfGuide FF]|r STOP at Step %d: %s [Info: %s]", i, activeReason, stepDebugInfo))
+            break
+        end
+
+        DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff808080[pfGuide FF]|r PASS Step %d [Info: %s]", i, stepDebugInfo ~= "" and stepDebugInfo or "No direct quest action"))
+    end
+
+    DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00ff00[pfGuide FF]|r Fast-Forward Selected Step %d/%d (%s)", activeIndex, #guide.steps, activeReason))
+    return activeIndex
+end
+
 function pfGuide:SetCurrentGuide(guideName)
     local guide = pfGuide.loadedGuides[guideName]
     if not guide then return end
     pfGuide.currentGuide = guide
     pfGuide.currentGuideKey = guide.name
-    pfGuide.currentStepIndex = 1
     pfGuide.completedLabels = {}
     pfGuide.activePassiveSteps = {}
     pfGuide.currentWaypointIndex = 1
@@ -254,6 +373,16 @@ function pfGuide:SetCurrentGuide(guideName)
     pfGuide.merchantVisited = false
     pfGuide.trainerVisited = false
     pfGuide.trainerOpen = false
+    pfGuide.hearthstoneUsed = false
+
+    pfGuide.currentStepIndex = pfGuide:FindFurthestActiveStep(guide)
+    for i = 1, pfGuide.currentStepIndex - 1 do
+        local step = guide.steps[i]
+        if step.label then
+            pfGuide.completedLabels[step.label] = true
+        end
+    end
+    DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00ff00[pfGuide]|r Guide loaded at Step %d/%d", pfGuide.currentStepIndex, #guide.steps))
     pfGuide:FindNearestWaypoint()
     pfGuide:ExecuteCurrentStep()
     pfGuide:UpdateUI()
@@ -958,6 +1087,12 @@ pfGuide:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
 pfGuide:SetScript("OnEvent", function()
     if event == "PLAYER_ENTERING_WORLD" then
         pfGuide:LoadAllGuides()
+        if pfQuest and pfQuest.UpdateQuestlog then
+            pfQuest:UpdateQuestlog()
+        end
+        if QueryQuestsCompleted then
+            QueryQuestsCompleted()
+        end
         local def = pfGuide:FindDefaultGuide()
         if def then pfGuide:SetCurrentGuide(def.name) end
         pfQuestGuideWindow:Show()
