@@ -119,6 +119,7 @@ function pfGuide:ParseGuideText(rawText)
                             elseif directive == "collect" then
                                 elem.itemId = tonumber(args[1])
                                 elem.qty = tonumber(args[2]) or 1
+                                elem.questId = tonumber(args[3])
                                 currentStep.hasCollect = true
                                 currentStep.hasComplete = true
                             elseif directive == "itemcount" then
@@ -294,9 +295,11 @@ function pfGuide:FindFurthestActiveStep(guide)
                 end
             elseif elem.tag == "collect" and elem.itemId then
                 hasQuestAction = true
+                local onQuest = elem.questId and pfQuest.questlog and pfQuest.questlog[elem.questId]
+                local turnedIn = elem.questId and pfQuest_history and pfQuest_history[elem.questId]
                 local count = pfGuide:GetItemCount(elem.itemId)
-                stepDebugInfo = string.format("Collect Item#%d (%d/%d)", elem.itemId, count, elem.qty or 1)
-                if count < (elem.qty or 1) then
+                stepDebugInfo = string.format("Collect Item#%d (%d/%d)%s", elem.itemId, count, elem.qty or 1, (onQuest or turnedIn) and " (QUEST_SATISFIED)" or "")
+                if not (onQuest or turnedIn) and count < (elem.qty or 1) then
                     isStepPassed = false
                     unfinishedReason = "Need to collect item #" .. elem.itemId .. string.format(" (%d/%d)", count, elem.qty or 1)
                     break
@@ -696,8 +699,12 @@ function pfGuide:CheckStepCompletion()
             local allDone = true
             for _, elem in ipairs(pStep.elements) do
                 if elem.tag == "collect" and elem.itemId then
-                    local count = pfGuide:GetItemCount(elem.itemId)
-                    if count < elem.qty then allDone = false; break end
+                    local onQuest = elem.questId and pfQuest.questlog and pfQuest.questlog[elem.questId]
+                    local turnedIn = elem.questId and pfQuest_history and pfQuest_history[elem.questId]
+                    if not (onQuest or turnedIn) then
+                        local count = pfGuide:GetItemCount(elem.itemId)
+                        if count < elem.qty then allDone = false; break end
+                    end
                 elseif elem.tag == "complete" and elem.questId then
                     local qData = pfQuest.questlog and pfQuest.questlog[elem.questId]
                     if qData then
@@ -788,8 +795,10 @@ function pfGuide:CheckStepCompletion()
                 end
             end
         elseif elem.tag == "collect" and elem.itemId then
+            local onQuest = elem.questId and pfQuest.questlog and pfQuest.questlog[elem.questId]
+            local turnedIn = elem.questId and pfQuest_history and pfQuest_history[elem.questId]
             local count = pfGuide:GetItemCount(elem.itemId)
-            if count < elem.qty then
+            if not (onQuest or turnedIn) and count < elem.qty then
                 isCompleted = false
                 pendingReason = string.format("Collecting item %d (%d/%d)", elem.itemId, count, elem.qty)
             end
