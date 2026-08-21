@@ -64,12 +64,44 @@ end
 
 function pfGuide:GetObjectiveProgress(questId, objIndex)
     if not questId then return nil, false end
-    local qData = pfQuest.questlog and pfQuest.questlog[questId]
-    if qData and qData.qlogid then
-        local text, _, done = GetQuestLogLeaderBoard(objIndex or 1, qData.qlogid)
-        if text and text ~= "" then return text, done end
+    local questTitle = pfDB and pfDB.quests and pfDB.quests.loc and pfDB.quests.loc[questId]
+    questTitle = type(questTitle) == "table" and questTitle.T or questTitle
+    local numEntries = GetNumQuestLogEntries() or 0
+
+    for qIndex = 1, numEntries do
+        local qTitle, _, _, isHeader, _, isComplete = pfQuestCompat.GetQuestLogTitle(qIndex)
+        if not isHeader then
+            local ids = pfDatabase and pfDatabase.GetQuestIDs and pfDatabase:GetQuestIDs(qIndex)
+            local matchId = ids and tonumber(ids[1])
+            if matchId == tonumber(questId) or (questTitle and questTitle ~= "" and questTitle == qTitle) then
+                local numObj = GetNumQuestLeaderBoards(qIndex) or 0
+                if objIndex and objIndex <= numObj then
+                    local text, _, done = GetQuestLogLeaderBoard(objIndex, qIndex)
+                    if text and text ~= "" then return text, done or isComplete end
+                end
+                return qTitle, isComplete
+            end
+        end
     end
     return nil, false
+end
+
+function pfGuide:GetItemCount(itemId)
+    if not itemId then return 0 end
+    local count = GetItemCount(itemId) or 0
+    if count > 0 then return count end
+
+    for bag = -2, 4 do
+        local slots = GetContainerNumSlots(bag) or 0
+        for slot = 1, slots do
+            local link = GetContainerItemLink(bag, slot)
+            if link and link:find("item:" .. itemId .. ":") then
+                local _, itemCount = GetContainerItemInfo(bag, slot)
+                count = count + (itemCount or 1)
+            end
+        end
+    end
+    return count
 end
 
 function pfGuide:IsQuestComplete(questId)

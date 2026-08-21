@@ -294,7 +294,7 @@ function pfGuide:FindFurthestActiveStep(guide)
                 end
             elseif elem.tag == "collect" and elem.itemId then
                 hasQuestAction = true
-                local count = GetItemCount(elem.itemId) or 0
+                local count = pfGuide:GetItemCount(elem.itemId)
                 stepDebugInfo = string.format("Collect Item#%d (%d/%d)", elem.itemId, count, elem.qty or 1)
                 if count < (elem.qty or 1) then
                     isStepPassed = false
@@ -441,8 +441,11 @@ function pfGuide:ExecuteCurrentStep(isManual)
     local step = guide.steps[pfGuide.currentStepIndex]
     pfGuide.hasArrivedAtTarget = false
 
-    -- Announce step activation
-    DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00bfff[pfGuide]|r Activating Step %d/%d (Elements: %d, WPs: %d)", pfGuide.currentStepIndex, #guide.steps, #step.elements, #step.gotoPoints))
+    -- Announce step activation only once per step.
+    if pfGuide.lastAnnouncedStep ~= pfGuide.currentStepIndex then
+        pfGuide.lastAnnouncedStep = pfGuide.currentStepIndex
+        DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00bfff[pfGuide]|r Activating Step %d/%d (Elements: %d, WPs: %d)", pfGuide.currentStepIndex, #guide.steps, #step.elements, #step.gotoPoints))
+    end
 
     -- Register label immediately when step is activated
     if step.label then
@@ -693,7 +696,7 @@ function pfGuide:CheckStepCompletion()
             local allDone = true
             for _, elem in ipairs(pStep.elements) do
                 if elem.tag == "collect" and elem.itemId then
-                    local count = GetItemCount(elem.itemId) or 0
+                    local count = pfGuide:GetItemCount(elem.itemId)
                     if count < elem.qty then allDone = false; break end
                 elseif elem.tag == "complete" and elem.questId then
                     local qData = pfQuest.questlog and pfQuest.questlog[elem.questId]
@@ -785,13 +788,13 @@ function pfGuide:CheckStepCompletion()
                 end
             end
         elseif elem.tag == "collect" and elem.itemId then
-            local count = GetItemCount(elem.itemId) or 0
+            local count = pfGuide:GetItemCount(elem.itemId)
             if count < elem.qty then
                 isCompleted = false
                 pendingReason = string.format("Collecting item %d (%d/%d)", elem.itemId, count, elem.qty)
             end
         elseif elem.tag == "itemcount" and elem.itemId then
-            local count = GetItemCount(elem.itemId) or 0
+            local count = pfGuide:GetItemCount(elem.itemId)
             if (elem.op == "<" and count >= elem.qty) or (elem.op == ">" and count <= elem.qty) then
                 DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00ff00[pfGuide]|r Step skipped: Item count condition met (%d items)", count))
                 pfGuide:NextStep()
@@ -926,7 +929,7 @@ function pfGuide:CheckStepCompletion()
                 if pfGuide.currentWaypointIndex < #step.gotoPoints then
                     pfGuide.currentWaypointIndex = pfGuide.currentWaypointIndex + 1
                     pfGuide:ExecuteCurrentStep()
-                elseif step.isLoop or step.hasComplete or step.hasCollect then
+                elseif #step.gotoPoints > 1 and (step.isLoop or step.hasComplete or step.hasCollect) then
                     pfGuide.currentWaypointIndex = 1
                     pfGuide:ExecuteCurrentStep()
                 end
@@ -1045,7 +1048,7 @@ function pfGuide:UpdateUI()
             local main = (progText and progText ~= "") and progText or title
             displayText = displayText .. "|cffff5555[*]|r " .. main .. (isDone and " |cff00ff00(Done)|r" or "") .. "\n"
         elseif elem.tag == "collect" then
-            local count = GetItemCount(elem.itemId) or 0
+            local count = pfGuide:GetItemCount(elem.itemId)
             local itemName = (pfDB and pfDB.items and pfDB.items.loc and pfDB.items.loc[elem.itemId]) or ("Item #" .. elem.itemId)
             displayText = displayText .. "|cffff5555[*]|r Collect " .. itemName .. string.format(" (%d/%d)", count, elem.qty) .. "\n"
         elseif elem.tag == "goto" and not hasDirectAction and #step.gotoPoints <= 2 then
@@ -1087,7 +1090,7 @@ function pfGuide:UpdateUI()
                     local main = (progText and progText ~= "") and progText or title
                     displayText = displayText .. "\n|cff888888[Side]|r " .. main
                 elseif elem.tag == "collect" then
-                    local count = GetItemCount(elem.itemId) or 0
+                    local count = pfGuide:GetItemCount(elem.itemId)
                     local itemName = (pfDB and pfDB.items and pfDB.items.loc and pfDB.items.loc[elem.itemId]) or ("Item #" .. elem.itemId)
                     displayText = displayText .. string.format("\n|cff888888[Side]|r Collect %s (%d/%d)", itemName, count, elem.qty)
                 elseif elem.tag == "xp" and elem.level and not elem.isSkipCheck then
