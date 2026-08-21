@@ -177,6 +177,9 @@ function pfGuide:ParseGuideText(rawText)
                                 end
                             elseif directive == "deathskip" then
                                 currentStep.hasDeathskip = true
+                            elseif directive == "subzone" then
+                                elem.subzoneId = tonumber(args[1])
+                                currentStep.hasComplete = true
                             elseif directive == "subzoneskip" then
                                 elem.subzoneId = tonumber(args[1])
                             end
@@ -849,6 +852,26 @@ function pfGuide:CheckStepCompletion()
             if not isGhost then
                 isCompleted = false
                 pendingReason = "Die and respawn at Spirit Healer"
+            end
+        elseif elem.tag == "subzone" and elem.subzoneId then
+            local subzoneText = GetSubZoneText and GetSubZoneText() or ""
+            local minimapText = GetMinimapZoneText and GetMinimapZoneText() or ""
+            local zoneLoc = pfDB and pfDB.zones and pfDB.zones.loc
+            local subzoneName = zoneLoc and zoneLoc[elem.subzoneId] or ""
+            local inSubzone = pfGuide.hasArrivedAtTarget
+
+            if subzoneName and subzoneName ~= "" then
+                inSubzone = inSubzone or subzoneText == subzoneName or minimapText == subzoneName
+            end
+
+            if not inSubzone and elem.subzoneId == 372 then
+                inSubzone = (subzoneText ~= "" and (subzoneText:find("Tiragarde") or subzoneText:find("Тирагард"))) or
+                    (minimapText ~= "" and (minimapText:find("Tiragarde") or minimapText:find("Тирагард")))
+            end
+
+            if not inSubzone then
+                isCompleted = false
+                pendingReason = "Travel to " .. (step.text ~= "" and step.text or "target area")
             end
         elseif elem.tag == "subzoneskip" and elem.subzoneId then
             local subzone = GetMinimapZoneText and GetMinimapZoneText() or ""
