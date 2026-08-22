@@ -88,7 +88,11 @@ function pfGuide:ParseGuideText(rawText)
                         if line:sub(1, 1) == "#" then
                             local tag, val = line:match("^#(%S+)%s*(.*)")
                             tag = string.lower(tag or "")
-                            if tag == "season" and (tonumber(val) or 0) ~= pfGuide.gameSeason then
+                            if tag == "softcore" and pfGuide.isHardcore then
+                                table.remove(guide.steps); stepCounter = stepCounter - 1; currentStep = nil; skipStep = true
+                            elseif tag == "hardcore" and not pfGuide.isHardcore then
+                                table.remove(guide.steps); stepCounter = stepCounter - 1; currentStep = nil; skipStep = true
+                            elseif tag == "season" and (tonumber(val) or 0) ~= pfGuide.gameSeason then
                                 table.remove(guide.steps); stepCounter = stepCounter - 1; currentStep = nil; skipStep = true
                             elseif tag == "xprate" then
                                 local op, rate = val:match("([<>]?)(%d+%.?%d*)")
@@ -342,10 +346,12 @@ function pfGuide:FindFurthestActiveStep(guide)
         -- Resolve pure travel, vendor, deathskip, and hearthstone steps from nearby quests.
         if stepDebugInfo == "" and not hasQuestAction then
             local isCompletewithSatisfied = false
+            local hasCompletewithTarget = false
             if step.completeWith and step.completeWith ~= "next" then
                 local targetIndex = guide.labels[step.completeWith]
                 local targetStep = targetIndex and guide.steps[targetIndex]
                 if targetStep then
+                    hasCompletewithTarget = true
                     local targetDone = true
                     for _, targetElem in ipairs(targetStep.elements or {}) do
                         if targetElem.tag == "complete" and targetElem.questId then
@@ -367,6 +373,13 @@ function pfGuide:FindFurthestActiveStep(guide)
                                 targetDone = false
                                 break
                             end
+                        elseif targetElem.tag == "turnin" and targetElem.questId then
+                            local turnedIn = pfQuest_history and pfQuest_history[targetElem.questId]
+                            DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff808080[pfGuide Debug]|r #completewith '%s': TurnIn Q#%d (%s)", step.completeWith, targetElem.questId, turnedIn and "TURNED_IN" or "NOT_TURNED_IN"))
+                            if not turnedIn then
+                                targetDone = false
+                                break
+                            end
                         end
                     end
                     if targetDone then
@@ -376,7 +389,11 @@ function pfGuide:FindFurthestActiveStep(guide)
                 end
             end
 
-            if not isCompletewithSatisfied then
+            if not isCompletewithSatisfied and hasCompletewithTarget then
+                isStepPassed = false
+                unfinishedReason = (step.text ~= "" and step.text) or "Travel to " .. step.completeWith
+                stepDebugInfo = string.format("Travel step (#completewith '%s' INCOMPLETE)", step.completeWith)
+            elseif not isCompletewithSatisfied then
                 local upcomingQuestsSatisfied = false
                 local nextQuestChecked = "None"
                 for k = i + 1, math.min(i + 8, #guide.steps) do
@@ -822,6 +839,13 @@ function pfGuide:CheckStepCompletion()
                         targetDone = false
                         break
                     end
+                elseif targetElem.tag == "turnin" and targetElem.questId then
+                    hasTargetCondition = true
+                    local turnedIn = pfQuest_history and pfQuest_history[targetElem.questId]
+                    if not turnedIn then
+                        targetDone = false
+                        break
+                    end
                 end
             end
             completeWithDone = hasTargetCondition and targetDone
@@ -832,7 +856,15 @@ function pfGuide:CheckStepCompletion()
             DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00ff00[pfGuide]|r Auto-skip: #completewith label '%s' objective already complete", step.completeWith))
             pfGuide:NextStep()
             return
+        elseif step.completeWith and step.completeWith ~= "next" then
+            local debugReason = step.completeWith .. ":" .. pfGuide.currentStepIndex
+            if pfGuide.lastCompleteWithDebug ~= debugReason then
+                pfGuide.lastCompleteWithDebug = debugReason
+                DEFAULT_CHAT_FRAME:AddMessage(string.format("|cffffcc00[pfGuide Debug]|r #completewith '%s' not satisfied; keeping Step %d active", step.completeWith, pfGuide.currentStepIndex))
+            end
         end
+    else
+        pfGuide.lastCompleteWithDebug = nil
     end
 
     if step.hasVendor and not pfGuide.merchantVisited then
@@ -1218,6 +1250,7 @@ pfGuide:RegisterEvent("QUEST_WATCH_UPDATE")
 pfGuide:RegisterEvent("PLAYER_XP_UPDATE")
 pfGuide:RegisterEvent("ZONE_CHANGED")
 pfGuide:RegisterEvent("ZONE_CHANGED_NEW_AREA")
+pfGuide:RegisterEvent("ZONE_CHANGED_INDOORS")
 pfGuide:RegisterEvent("CHAT_MSG_COMBAT_XP_GAIN")
 pfGuide:RegisterEvent("MERCHANT_SHOW")
 pfGuide:RegisterEvent("MERCHANT_CLOSED")
@@ -1275,6 +1308,8 @@ pfGuide:SetScript("OnEvent", function()
             DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[pfGuide]|r Hearthstone cast succeeded!")
             pfGuide:CheckStepCompletion()
         end
+    elseif event == "ZONE_CHANGED" or event == "ZONE_CHANGED_NEW_AREA" or event == "ZONE_CHANGED_INDOORS" then
+        pfGuide:CheckStepCompletion()
     elseif event == "CONFIRM_XP_LOSS" or event == "PLAYER_UNGHOST" then
         local guide = pfGuide.currentGuide
         local step = guide and guide.steps[pfGuide.currentStepIndex]

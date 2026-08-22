@@ -22,6 +22,7 @@ pfGuide.activePassiveSteps = {}
 pfGuide.currentWaypointIndex = 1
 pfGuide.gameSeason = 0
 pfGuide.xpRate = 1.0
+pfGuide.isHardcore = true
 
 pfGuide.RouteReset = pfQuest.route.Reset
 pfGuide.RouteAddPoint = pfQuest.route.AddPoint
@@ -271,7 +272,15 @@ SLASH_PFGUIDE1 = "/guide"
 SLASH_PFGUIDE2 = "/rxp"
 SlashCmdList["PFGUIDE"] = function(msg)
     msg = msg and msg:match("^%s*(.-)%s*$") or ""
-    if msg == "list" then
+    if msg == "hc" or msg == "hardcore" then
+        local guideName = pfGuide.currentGuide and pfGuide.currentGuide.name
+        pfGuide.isHardcore = not pfGuide.isHardcore
+        DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00ff00[pfGuide]|r Mode changed to: %s", pfGuide.isHardcore and "|cffff0000HARDCORE (No Deathskips)|r" or "|cff00ff00SOFTCORE|r"))
+        if guideName then
+            pfGuide:LoadAllGuides()
+            pfGuide:SetCurrentGuide(guideName)
+        end
+    elseif msg == "list" then
         DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[pfGuide]|r Loaded Guides:")
         for name in pairs(pfGuide.loadedGuides) do DEFAULT_CHAT_FRAME:AddMessage(" - " .. name) end
     elseif msg ~= "" and pfGuide.loadedGuides[msg] then
