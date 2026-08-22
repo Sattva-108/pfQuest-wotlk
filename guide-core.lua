@@ -104,6 +104,19 @@ function pfGuide:GetItemCount(itemId)
     return count
 end
 
+function pfGuide:IsCollectComplete(elem)
+    if not elem or not elem.itemId then return 0, false end
+    local count = pfGuide:GetItemCount(elem.itemId)
+    local qty = elem.qty or 1
+    local turnedIn = elem.questId and pfQuest_history and pfQuest_history[elem.questId]
+    local onQuest = elem.questId and pfQuest.questlog and pfQuest.questlog[elem.questId]
+    local isStarterItem = elem.questId and (
+        elem.itemId == 4881 or elem.itemId == 4882 or
+        (pfDatabase and pfDatabase.itemToQuest and pfDatabase.itemToQuest[elem.itemId])
+    )
+    return count, count >= qty or turnedIn or (onQuest and isStarterItem) or false
+end
+
 function pfGuide:IsQuestComplete(questId)
     if not questId then return false end
     if pfQuest_history and pfQuest_history[questId] then return true end
