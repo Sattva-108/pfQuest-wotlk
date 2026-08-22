@@ -2,22 +2,6 @@
 -- ACTIVE GUIDE ENGINE LOGIC (PARSER & STEP MACHINE)
 -- ============================================================================
 
-function pfGuide:FormatMoney(copper)
-    copper = tonumber(copper) or 0
-    if copper >= 10000 then
-        local g = math.floor(copper / 10000)
-        local s = math.floor((copper % 10000) / 100)
-        local c = copper % 100
-        return string.format("%dg %ds %dc", g, s, c)
-    elseif copper >= 100 then
-        local s = math.floor(copper / 100)
-        local c = copper % 100
-        return (c > 0) and string.format("%ds %dc", s, c) or string.format("%ds", s)
-    else
-        return string.format("%dc", copper)
-    end
-end
-
 function pfGuide:Applies(conditionStr)
     if not conditionStr or conditionStr == "" then return true end
     local _, pClass = UnitClass("player")
