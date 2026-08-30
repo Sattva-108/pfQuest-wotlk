@@ -457,12 +457,22 @@ function pfGuide:SetCurrentGuide(guideName)
     pfGuide:UpdateUI()
 end
 
-function pfGuide:PointToCoords(x, y, zoneId, title)
-    if not x or not y then return end
+function pfGuide:RefreshActiveWaypoint()
+    local pt = pfGuide.currentPointTarget
+    if not pt or not pt.rawX or not pt.rawY then return end
 
-    local projX, projY = pfGuide:GetProjectedCoords(x, y, zoneId)
+    local projX, projY = pfGuide:GetProjectedCoords(pt.rawX, pt.rawY, pt.zoneId)
 
-    local node = { [1] = projX, [2] = projY, [3] = { title = title or "RXP Objective", texture = pfQuestConfig.path .. "\\img\\cluster_mob", qlvl = 0 }, [4] = 0 }
+    local node = {
+        [1] = projX,
+        [2] = projY,
+        [3] = {
+            title = pt.title or "RXP Objective",
+            texture = pfQuestConfig.path .. "\\img\\cluster_mob",
+            qlvl = 0
+        },
+        [4] = 0
+    }
     pfQuest.route.coords = { node }
     pfQuest.route.firstnode = nil
     pfQuest.route.recalculate = 0
@@ -471,6 +481,20 @@ function pfGuide:PointToCoords(x, y, zoneId, title)
         pfQuest.route.arrow.parent = pfQuest.route
         pfQuest.route.arrow:Show()
     end
+end
+
+function pfGuide:PointToCoords(x, y, zoneId, title)
+    if not x or not y then return end
+
+    -- Cache raw target info so we can re-project dynamically on zone change
+    pfGuide.currentPointTarget = {
+        rawX = x,
+        rawY = y,
+        zoneId = zoneId,
+        title = title
+    }
+
+    pfGuide:RefreshActiveWaypoint()
 end
 
 function pfGuide:FindNearestWaypoint()
@@ -1244,6 +1268,7 @@ function pfGuide:NextStep(isManual)
         pfGuide.hearthstoneUsed = false
         pfGuide.deathskipDone = false
         pfGuide.activeSteps = {}
+        pfGuide.currentPointTarget = nil
 
         -- Complete any ambient tasks with completeWith == "next"
         local toRemove = {}
@@ -1521,6 +1546,8 @@ pfGuide:SetScript("OnEvent", function()
             pfGuide:CheckStepCompletion()
         end
     elseif event == "ZONE_CHANGED" or event == "ZONE_CHANGED_NEW_AREA" or event == "ZONE_CHANGED_INDOORS" then
+        SetMapToCurrentZone()
+        pfGuide:RefreshActiveWaypoint()
         pfGuide:CheckStepCompletion()
     elseif event == "CONFIRM_XP_LOSS" or event == "PLAYER_UNGHOST" then
         local guide = pfGuide.currentGuide
@@ -1545,6 +1572,14 @@ pfGuide:SetScript("OnUpdate", function()
     local now = GetTime()
     if now - lastUpdate > 0.25 then
         lastUpdate = now
+
+        -- Detect zone change dynamically and re-project active waypoint
+        local currentZoneId = pfMap:GetMapID(GetCurrentMapContinent(), GetCurrentMapZone())
+        if pfGuide.lastPlayerZoneId ~= currentZoneId then
+            pfGuide.lastPlayerZoneId = currentZoneId
+            pfGuide:RefreshActiveWaypoint()
+        end
+
         pfGuide:CheckStepCompletion()
     end
 end)
