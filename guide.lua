@@ -459,7 +459,10 @@ end
 
 function pfGuide:PointToCoords(x, y, zoneId, title)
     if not x or not y then return end
-    local node = { [1] = x, [2] = y, [3] = { title = title or "RXP Objective", texture = pfQuestConfig.path .. "\\img\\cluster_mob", qlvl = 0 }, [4] = 0 }
+
+    local projX, projY = pfGuide:GetProjectedCoords(x, y, zoneId)
+
+    local node = { [1] = projX, [2] = projY, [3] = { title = title or "RXP Objective", texture = pfQuestConfig.path .. "\\img\\cluster_mob", qlvl = 0 }, [4] = 0 }
     pfQuest.route.coords = { node }
     pfQuest.route.firstnode = nil
     pfQuest.route.recalculate = 0
@@ -482,7 +485,8 @@ function pfGuide:FindNearestWaypoint()
 
     local bestIndex, bestDist = 1, math.huge
     for i, wp in ipairs(step.gotoPoints) do
-        local yards = pfGuide:GetDistanceToPoint(pX, pY, wp.x, wp.y)
+        local wpZoneId = wp.zone and pfGuide:GetZoneID(wp.zone) or nil
+        local yards = pfGuide:GetDistanceToPoint(pX, pY, wp.x, wp.y, wpZoneId)
         if yards < bestDist then bestDist = yards; bestIndex = i end
     end
     pfGuide.currentWaypointIndex = bestIndex
@@ -883,8 +887,10 @@ function pfGuide:CheckStepCompletion()
                 pX, pY = pX * 100, pY * 100
                 local wp = activeStep.gotoPoints[1]
                 if wp and pX > 0 and pY > 0 then
-                    local dX = (pX - wp.x) * 1.45
-                    local dY = (pY - wp.y)
+                    local wpZoneId = wp.zone and pfGuide:GetZoneID(wp.zone) or nil
+                    local tX, tY = pfGuide:GetProjectedCoords(wp.x, wp.y, wpZoneId)
+                    local dX = (pX - tX) * 1.45
+                    local dY = (pY - tY)
                     local mapDist = math.sqrt(dX * dX + dY * dY)
                     if mapDist > math.max((wp.radius or 15) / 45.0, 0.6) then
                         stepDone = false
@@ -1171,8 +1177,10 @@ function pfGuide:CheckStepCompletion()
 
         local wp = step.gotoPoints[pfGuide.currentWaypointIndex]
         if wp and pX > 0 and pY > 0 then
-            local dX = (pX - wp.x) * 1.45
-            local dY = (pY - wp.y)
+            local wpZoneId = wp.zone and pfGuide:GetZoneID(wp.zone) or nil
+            local tX, tY = pfGuide:GetProjectedCoords(wp.x, wp.y, wpZoneId)
+            local dX = (pX - tX) * 1.45
+            local dY = (pY - tY)
             local mapDist = math.sqrt(dX * dX + dY * dY)
             if mapDist <= math.max((wp.radius or 15) / 45.0, 0.6) then
                 pfGuide.hasArrivedAtTarget = true
@@ -1189,8 +1197,10 @@ function pfGuide:CheckStepCompletion()
         local isPureTravel = not step.hasAcceptOrTurnIn and not step.hasComplete and not step.hasVendor and not step.hasTrainer and not step.hasCollect and not (step.hasDeathskip and pfGuide.deathskipDone)
         if isPureTravel and pfGuide.currentWaypointIndex >= #step.gotoPoints then
             local lastWp = step.gotoPoints[#step.gotoPoints]
-            local dX = (pX - lastWp.x) * 1.45
-            local dY = (pY - lastWp.y)
+            local lastWpZoneId = lastWp.zone and pfGuide:GetZoneID(lastWp.zone) or nil
+            local tX, tY = pfGuide:GetProjectedCoords(lastWp.x, lastWp.y, lastWpZoneId)
+            local dX = (pX - tX) * 1.45
+            local dY = (pY - tY)
             if math.sqrt(dX * dX + dY * dY) > math.max((lastWp.radius or 15) / 45.0, 0.6) then
                 isCompleted = false
                 pendingReason = "Travel to waypoint"

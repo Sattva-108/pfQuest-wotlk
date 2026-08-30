@@ -4,7 +4,7 @@ local compat = pfQuestCompat
 pfDatabase = {}
 
 local loc = GetLocale()
-local dbs = { "items", "quests", "quests-itemreq", "questxp", "objects", "units", "zones", "professions", "areatrigger", "refloot" }
+local dbs = { "items", "quests", "quests-itemreq", "questxp", "objects", "units", "zones", "professions", "areatrigger", "refloot", "worldmaparea" }
 local noloc = { items = true, quests = true, questxp = true, objects = true, units = true }
 
 pfDB.locales = {

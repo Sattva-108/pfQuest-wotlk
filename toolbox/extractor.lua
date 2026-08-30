@@ -62,6 +62,11 @@ local CATEGORIES = {
     name = "Reference Loot",
     deps = {},
     priority = 6
+  },
+  worldmaparea = {
+    name = "WorldMapArea",
+    deps = {},
+    priority = 7
   }
 }
 
@@ -4133,6 +4138,42 @@ end
     print("  Memory cleanup after minimap: " .. math.floor(collectgarbage("count")) .. " KB")
   end
 
+  local start_time_worldmaparea = os.clock()
+  do -- worldmaparea
+    print("- loading worldmaparea...")
+
+    pfDB["worldmaparea"] = pfDB["worldmaparea"] or {}
+    pfDB["worldmaparea"][data] = {}
+
+    if core == "acore" then
+      local query = mysql:execute([[SELECT areatableID, mapID, x_min, x_max, y_min, y_max
+        FROM WorldMapArea_wotlk WHERE areatableID > 0 ORDER BY areatableID ASC]])
+      if query then
+        local row = {}
+        local count = 0
+        while query:fetch(row, "a") do
+          local areaID = tonumber(row.areatableID)
+          local mapID = tonumber(row.mapID)
+          local y_west = tonumber(row.y_max)
+          local y_east = tonumber(row.y_min)
+          local x_north = tonumber(row.x_max)
+          local x_south = tonumber(row.x_min)
+
+          if areaID and areaID > 0 and y_west and y_east and x_north and x_south then
+            pfDB["worldmaparea"][data][areaID] = { y_west, y_east, x_north, x_south, mapID }
+            count = count + 1
+          end
+        end
+        query:close()
+        print("  Extracted " .. count .. " zone boundaries for worldmaparea")
+      end
+    end
+
+    local end_time_worldmaparea = os.clock()
+    table.insert(execution_times, {name = "worldmaparea", time = end_time_worldmaparea - start_time_worldmaparea})
+    collectgarbage("collect")
+  end
+
   local start_time_meta = os.clock()
   do -- meta
     print("- loading meta...")
@@ -4847,6 +4888,11 @@ end
   collectgarbage("collect")
   -- print("    Memory after minimap: " .. math.floor(collectgarbage("count")) .. " KB")
 
+  print("  Writing worldmaparea...")
+  serialize(output .. string.format("worldmaparea%s.lua", exp), "pfDB[\"worldmaparea\"][\""..data.."\"]", pfDB["worldmaparea"][data])
+  pfDB["worldmaparea"][data] = nil
+  collectgarbage("collect")
+
   print("  Writing meta...")
   serialize(output .. string.format("meta%s.lua", exp), "pfDB[\"meta"..exp.."\"]", pfDB["meta"..exp])
   pfDB["meta"..exp] = nil
@@ -4941,6 +4987,7 @@ end
   ["refloot"] = {},
   ["units"] = {},
   ["zones"] = {},
+  ["worldmaparea"] = {},
 }
 ]])
       init_file:close()

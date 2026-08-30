@@ -74,6 +74,58 @@ function pfGuide:GetZoneID(zoneName)
     return pfGuide.ZoneMap[zoneName] or (pfDatabase and pfDatabase.GetMapIDByName and pfDatabase:GetMapIDByName(zoneName))
 end
 
+function pfGuide:GetWorldBounds(zoneId)
+    if not zoneId then return nil end
+    if pfDB and pfDB.worldmaparea and pfDB.worldmaparea.data and pfDB.worldmaparea.data[zoneId] then
+        return pfDB.worldmaparea.data[zoneId]
+    end
+    return nil
+end
+
+function pfGuide:GetProjectedCoords(targetX, targetY, targetZoneId)
+    if not targetX or not targetY then return targetX, targetY end
+
+    local currentContinent = GetCurrentMapContinent()
+    local currentZone = GetCurrentMapZone()
+    local currentZoneId = pfMap:GetMapID(currentContinent, currentZone)
+
+    if not targetZoneId or not currentZoneId or targetZoneId == currentZoneId then
+        return targetX, targetY
+    end
+
+    local targetBounds = pfGuide:GetWorldBounds(targetZoneId)
+    local currentBounds = pfGuide:GetWorldBounds(currentZoneId)
+
+    if not targetBounds or not currentBounds or targetBounds[5] ~= currentBounds[5] then
+        return targetX, targetY
+    end
+
+    -- Bounds: { LocLeft (col5), LocRight (col6), LocTop (col7), LocBottom (col8), mapID }
+    local tLeft, tRight, tTop, tBottom = targetBounds[3], targetBounds[4], targetBounds[1], targetBounds[2]
+    local cLeft, cRight, cTop, cBottom = currentBounds[3], currentBounds[4], currentBounds[1], currentBounds[2]
+
+    local tWidthX = tLeft - tRight
+    local tHeightY = tTop - tBottom
+    local cWidthX = cLeft - cRight
+    local cHeightY = cTop - cBottom
+
+    if tWidthX <= 0 or tHeightY <= 0 or cWidthX <= 0 or cHeightY <= 0 then
+        return targetX, targetY
+    end
+
+    -- Target local coords -> True World Coordinates
+    -- targetX (horizontal 0..100) maps along LocLeft -> LocRight
+    -- targetY (vertical 0..100) maps along LocTop -> LocBottom
+    local targetWorldX = tLeft - (targetX / 100) * tWidthX
+    local targetWorldY = tTop - (targetY / 100) * tHeightY
+
+    -- True World Coordinates -> Player Zone Projected coords (%%)
+    local projX = ((cLeft - targetWorldX) / cWidthX) * 100
+    local projY = ((cTop - targetWorldY) / cHeightY) * 100
+
+    return projX, projY
+end
+
 function pfGuide:GetQuestTitle(questId)
     if not questId then return "Unknown Quest" end
     local loc = pfDB and pfDB.quests and pfDB.quests.loc and pfDB.quests.loc[questId]
@@ -154,12 +206,37 @@ function pfGuide:IsQuestComplete(questId)
     return false
 end
 
-function pfGuide:GetDistanceToPoint(pX, pY, targetX, targetY)
+function pfGuide:GetDistanceToPoint(pX, pY, targetX, targetY, targetZoneId)
     if not pX or not pY or not targetX or not targetY or pX == 0 or pY == 0 then
         return math.huge, math.huge
     end
-    local dX = (pX - targetX) * 1.45
-    local dY = (pY - targetY)
+
+    local currentContinent = GetCurrentMapContinent()
+    local currentZone = GetCurrentMapZone()
+    local currentZoneId = pfMap:GetMapID(currentContinent, currentZone)
+
+    local targetBounds = pfGuide:GetWorldBounds(targetZoneId)
+    local currentBounds = pfGuide:GetWorldBounds(currentZoneId)
+
+    if targetBounds and currentBounds and targetBounds[5] == currentBounds[5] then
+        local tLeft, tRight, tTop, tBottom = targetBounds[3], targetBounds[4], targetBounds[1], targetBounds[2]
+        local cLeft, cRight, cTop, cBottom = currentBounds[3], currentBounds[4], currentBounds[1], currentBounds[2]
+
+        local targetWorldX = tLeft - (targetX / 100) * (tLeft - tRight)
+        local targetWorldY = tTop - (targetY / 100) * (tTop - tBottom)
+
+        local playerWorldX = cLeft - (pX / 100) * (cLeft - cRight)
+        local playerWorldY = cTop - (pY / 100) * (cTop - cBottom)
+
+        local dX = targetWorldX - playerWorldX
+        local dY = targetWorldY - playerWorldY
+        local yards = math.sqrt(dX * dX + dY * dY)
+        return yards, yards / 16.0
+    end
+
+    local projX, projY = pfGuide:GetProjectedCoords(targetX, targetY, targetZoneId)
+    local dX = (pX - projX) * 1.45
+    local dY = (pY - projY)
     local mapDist = math.sqrt(dX * dX + dY * dY)
     local yards = mapDist * 16.0
     return yards, mapDist

@@ -11,4 +11,5 @@ pfDB = {
   ["refloot"] = {},
   ["units"] = {},
   ["zones"] = {},
+  ["worldmaparea"] = {},
 }
