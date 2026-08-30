@@ -171,6 +171,8 @@ function pfGuide:ParseGuideText(rawText)
                                 currentStep.hasComplete = true
                             elseif directive == "subzoneskip" then
                                 elem.subzoneId = tonumber(args[1])
+                            elseif directive == "zoneskip" then
+                                elem.zone = args[1]
                             end
                             table.insert(currentStep.elements, elem)
                             if desc and desc ~= "" and currentStep.text == "" then currentStep.text = desc end
@@ -382,7 +384,14 @@ function pfGuide:FindFurthestActiveStep(guide)
                 local nextQuestChecked = "None"
                 for k = i + 1, math.min(i + 8, #guide.steps) do
                     for _, nextElem in ipairs(guide.steps[k].elements or {}) do
-                        if (nextElem.tag == "turnin" or nextElem.tag == "complete" or nextElem.tag == "accept") and nextElem.questId then
+                        if nextElem.tag == "turnin" and nextElem.questId then
+                            nextQuestChecked = string.format("TurnIn Q#%d", nextElem.questId)
+                            local turnedIn = pfQuest_history and pfQuest_history[nextElem.questId]
+                            if turnedIn then
+                                upcomingQuestsSatisfied = true
+                                break
+                            end
+                        elseif (nextElem.tag == "complete" or nextElem.tag == "accept") and nextElem.questId then
                             nextQuestChecked = string.format("Q#%d", nextElem.questId)
                             local turnedIn = pfQuest_history and pfQuest_history[nextElem.questId]
                             local isComplete = pfGuide:IsQuestComplete(nextElem.questId)
@@ -424,6 +433,7 @@ function pfGuide:SetCurrentGuide(guideName)
     pfGuide.currentGuideKey = guide.name
     pfGuide.completedLabels = {}
     pfGuide.activePassiveSteps = {}
+    pfGuide.activeSteps = {}
     pfGuide.currentWaypointIndex = 1
     pfGuide.merchantOpen = false
     pfGuide.merchantInteracted = false
@@ -642,6 +652,25 @@ function pfGuide:ExecuteCurrentStep(isManual)
         end
     end
 
+    -- Handle completewith next: build activeSteps with sticky + primary
+    if step.completeWith == "next" and step.index < #guide.steps then
+        local nextStep = guide.steps[step.index + 1]
+        if nextStep then
+            pfGuide.activeSteps = { step, nextStep }
+            pfGuide.currentStepIndex = step.index + 1
+            -- Set arrow to sticky step goto
+            if #step.gotoPoints > 0 then
+                local wp = step.gotoPoints[1]
+                if wp and wp.x and wp.y then
+                    pfGuide:PointToCoords(wp.x, wp.y, pfGuide:GetZoneID(wp.zone), step.text)
+                end
+            end
+            DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00bfff[pfGuide]|r Step %d is sticky (completewith next); showing Steps %d-%d", step.index, step.index, step.index + 1))
+            pfGuide:UpdateUI()
+            return
+        end
+    end
+
     local targetFound = false
 
     if #step.gotoPoints > 0 then
@@ -775,6 +804,14 @@ function pfGuide:CheckStepCompletion()
                         allDone = false
                         break
                     end
+                elseif elem.tag == "zoneskip" and elem.zone then
+                    local targetZoneId = pfGuide:GetZoneID(elem.zone)
+                    local currentZoneId = pfMap:GetMapID(GetCurrentMapContinent(), GetCurrentMapZone())
+                    local currentZoneText = GetRealZoneText()
+                    if not ((targetZoneId and currentZoneId == targetZoneId) or (currentZoneText and currentZoneText == elem.zone)) then
+                        allDone = false
+                        break
+                    end
                 end
             end
             if allDone and #pStep.elements > 0 then
@@ -787,31 +824,137 @@ function pfGuide:CheckStepCompletion()
         table.remove(pfGuide.activePassiveSteps, toRemove[j])
     end
 
+    -- Check all activeSteps (sticky + primary displayed together)
+    if #pfGuide.activeSteps > 0 then
+        local completedIndices = {}
+        for si, activeStep in ipairs(pfGuide.activeSteps) do
+            local stepDone = true
+            local stepPending = nil
+
+            -- Check zoneskip
+            for _, elem in ipairs(activeStep.elements) do
+                if elem.tag == "zoneskip" and elem.zone then
+                    local targetZoneId = pfGuide:GetZoneID(elem.zone)
+                    local currentZoneId = pfMap:GetMapID(GetCurrentMapContinent(), GetCurrentMapZone())
+                    local currentZoneText = GetRealZoneText()
+                    if (targetZoneId and currentZoneId == targetZoneId) or (currentZoneText and currentZoneText == elem.zone) then
+                        stepDone = true
+                        break
+                    end
+                end
+            end
+
+            -- Check quest actions for this step
+            if stepDone then
+                for _, elem in ipairs(activeStep.elements) do
+                    if elem.tag == "accept" and elem.questId then
+                        if not (pfQuest.questlog and pfQuest.questlog[elem.questId]) and not (pfQuest_history and pfQuest_history[elem.questId]) then
+                            stepDone = false
+                            stepPending = "Accept quest " .. elem.questId
+                            break
+                        end
+                    elseif elem.tag == "turnin" and elem.questId then
+                        if not (pfQuest_history and pfQuest_history[elem.questId]) then
+                            stepDone = false
+                            stepPending = "Turn in quest " .. elem.questId
+                            break
+                        end
+                    elseif elem.tag == "complete" and elem.questId then
+                        local qData = pfQuest.questlog and pfQuest.questlog[elem.questId]
+                        if qData then
+                            local _, done = pfGuide:GetObjectiveProgress(elem.questId, elem.objIndex)
+                            if not done then stepDone = false; stepPending = "Complete objective"; break end
+                        elseif not (pfQuest_history and pfQuest_history[elem.questId]) then
+                            stepDone = false
+                            stepPending = "Complete quest"
+                            break
+                        end
+                    elseif elem.tag == "collect" and elem.itemId then
+                        local _, isDone = pfGuide:IsCollectComplete(elem)
+                        if not isDone then stepDone = false; stepPending = "Collect item"; break end
+                    end
+                end
+            end
+
+            -- Check goto completion for sticky steps
+            if stepDone and #activeStep.gotoPoints > 0 and not activeStep.hasAcceptOrTurnIn and not activeStep.hasComplete and not activeStep.hasCollect then
+                local pX, pY = GetPlayerMapPosition("player")
+                if pX == 0 and pY == 0 then SetMapToCurrentZone(); pX, pY = GetPlayerMapPosition("player") end
+                pX, pY = pX * 100, pY * 100
+                local wp = activeStep.gotoPoints[1]
+                if wp and pX > 0 and pY > 0 then
+                    local dX = (pX - wp.x) * 1.45
+                    local dY = (pY - wp.y)
+                    local mapDist = math.sqrt(dX * dX + dY * dY)
+                    if mapDist > math.max((wp.radius or 15) / 45.0, 0.6) then
+                        stepDone = false
+                        stepPending = "Travel to waypoint"
+                    end
+                end
+            end
+
+            if stepDone then
+                table.insert(completedIndices, si)
+                if activeStep.label then pfGuide.completedLabels[activeStep.label] = true end
+                DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00ff00[pfGuide]|r ActiveStep %d completed", activeStep.index))
+            end
+        end
+
+        -- Remove completed steps (reverse order)
+        for j = #completedIndices, 1, -1 do
+            table.remove(pfGuide.activeSteps, completedIndices[j])
+        end
+
+        if #pfGuide.activeSteps == 0 then
+            -- All active steps done, advance
+            pfGuide.furthestStepIndex = math.max(pfGuide.furthestStepIndex or 1, pfGuide.currentStepIndex + 1)
+            pfGuide:NextStep()
+            return
+        elseif #completedIndices > 0 then
+            -- Some steps completed, update arrow to first remaining step
+            local firstRemaining = pfGuide.activeSteps[1]
+            if #firstRemaining.gotoPoints > 0 then
+                local wp = firstRemaining.gotoPoints[1]
+                if wp and wp.x and wp.y then
+                    pfGuide:PointToCoords(wp.x, wp.y, pfGuide:GetZoneID(wp.zone), firstRemaining.text)
+                end
+            end
+            pfGuide:UpdateUI()
+            return
+        end
+
+        pfGuide:UpdateUI()
+        return
+    end
+
     -- Handle sticky/completewith for primary step
     local step = guide.steps[pfGuide.currentStepIndex]
     local isCompleted = true
     local pendingReason = nil
 
-    if step.completeWith and step.completeWith ~= "next" then
-        local completeWithDone = pfGuide.completedLabels[step.completeWith]
-        local targetIndex = guide.labels[step.completeWith]
-        local targetStep = targetIndex and guide.steps[targetIndex]
+    if step.completeWith then
+        local targetStep = nil
+        if step.completeWith == "next" then
+            targetStep = guide.steps[step.index + 1]
+        else
+            local targetIndex = guide.labels[step.completeWith]
+            targetStep = targetIndex and guide.steps[targetIndex]
+        end
 
-        if not completeWithDone and targetStep then
+        if targetStep then
             local hasTargetCondition = false
             local targetDone = true
             for _, targetElem in ipairs(targetStep.elements or {}) do
-                if targetElem.tag == "complete" and targetElem.questId then
+                if targetElem.tag == "turnin" and targetElem.questId then
                     hasTargetCondition = true
-                    local _, isObjDone = pfGuide:GetObjectiveProgress(targetElem.questId, targetElem.objIndex or 1)
-                    if not (isObjDone or pfGuide:IsQuestComplete(targetElem.questId)) then
+                    if not (pfQuest_history and pfQuest_history[targetElem.questId]) then
                         targetDone = false
                         break
                     end
-                elseif targetElem.tag == "collect" and targetElem.itemId then
+                elseif targetElem.tag == "complete" and targetElem.questId then
                     hasTargetCondition = true
-                    local _, isDone = pfGuide:IsCollectComplete(targetElem)
-                    if not isDone then
+                    local _, isObjDone = pfGuide:GetObjectiveProgress(targetElem.questId, targetElem.objIndex or 1)
+                    if not (isObjDone or pfGuide:IsQuestComplete(targetElem.questId)) then
                         targetDone = false
                         break
                     end
@@ -823,32 +966,15 @@ function pfGuide:CheckStepCompletion()
                         targetDone = false
                         break
                     end
-                elseif targetElem.tag == "turnin" and targetElem.questId then
-                    hasTargetCondition = true
-                    local turnedIn = pfQuest_history and pfQuest_history[targetElem.questId]
-                    if not turnedIn then
-                        targetDone = false
-                        break
-                    end
                 end
             end
-            completeWithDone = hasTargetCondition and targetDone
-        end
 
-        if completeWithDone then
-            pfGuide.completedLabels[step.completeWith] = true
-            DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00ff00[pfGuide]|r Auto-skip: #completewith label '%s' objective already complete", step.completeWith))
-            pfGuide:NextStep()
-            return
-        elseif step.completeWith and step.completeWith ~= "next" then
-            local debugReason = step.completeWith .. ":" .. pfGuide.currentStepIndex
-            if pfGuide.lastCompleteWithDebug ~= debugReason then
-                pfGuide.lastCompleteWithDebug = debugReason
-                DEFAULT_CHAT_FRAME:AddMessage(string.format("|cffffcc00[pfGuide Debug]|r #completewith '%s' not satisfied; keeping Step %d active", step.completeWith, pfGuide.currentStepIndex))
+            if hasTargetCondition and targetDone then
+                DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00ff00[pfGuide]|r Auto-skip: #completewith '%s' already satisfied", step.completeWith))
+                pfGuide:NextStep()
+                return
             end
         end
-    else
-        pfGuide.lastCompleteWithDebug = nil
     end
 
     if step.hasVendor and not pfGuide.merchantVisited then
@@ -993,6 +1119,19 @@ function pfGuide:CheckStepCompletion()
                 isCompleted = false
                 pendingReason = "Leave area: " .. subzone
             end
+        elseif elem.tag == "zoneskip" and elem.zone then
+            local targetZoneId = pfGuide:GetZoneID(elem.zone)
+            local currentZoneId = pfMap:GetMapID(GetCurrentMapContinent(), GetCurrentMapZone())
+            local currentZoneText = GetRealZoneText()
+            local currentSubZoneText = GetSubZoneText()
+            if (targetZoneId and currentZoneId == targetZoneId) or
+               (currentZoneText and currentZoneText == elem.zone) or
+               (currentSubZoneText and currentSubZoneText == elem.zone) then
+                -- zoneskip satisfied, step can complete
+            else
+                isCompleted = false
+                pendingReason = "Travel to " .. elem.zone
+            end
         elseif elem.tag == "hs" then
             if not pfGuide.hearthstoneUsed then
                 isCompleted = false
@@ -1094,6 +1233,7 @@ function pfGuide:NextStep(isManual)
         pfGuide.trainerOpen = false
         pfGuide.hearthstoneUsed = false
         pfGuide.deathskipDone = false
+        pfGuide.activeSteps = {}
 
         -- Complete any ambient tasks with completeWith == "next"
         local toRemove = {}
@@ -1140,6 +1280,84 @@ function pfGuide:UpdateUI()
     if not guide or not guide.steps[pfGuide.currentStepIndex] then
         pfQuestGuideWindow.title:SetText("pfQuest RXP Guide")
         pfQuestGuideWindow.text:SetText("No active step.")
+        return
+    end
+
+    -- Render all activeSteps (sticky + primary displayed together)
+    if #pfGuide.activeSteps > 0 then
+        local firstStep = pfGuide.activeSteps[1]
+        local lastStep = pfGuide.activeSteps[#pfGuide.activeSteps]
+        local firstIdx = firstStep.index
+        local lastIdx = lastStep.index
+        pfQuestGuideWindow.title:SetText(string.format("|cff00ff00%s|r [Step %d-%d/%d]", guide.name, firstIdx, lastIdx, #guide.steps))
+
+        local displayText = ""
+        for _, activeStep in ipairs(pfGuide.activeSteps) do
+            local hasDirectAction = activeStep.hasAcceptOrTurnIn or activeStep.hasComplete or activeStep.hasTrainer or activeStep.hasVendor or activeStep.hasCollect
+            for _, elem in ipairs(activeStep.elements) do
+                if elem.tag == "accept" then
+                    local onQuest = elem.questId and pfQuest.questlog and pfQuest.questlog[elem.questId]
+                    local turnedIn = elem.questId and pfQuest_history and pfQuest_history[elem.questId]
+                    local isDone = onQuest or turnedIn
+                    displayText = displayText .. "|cffffff00[!] Accept:|r " .. pfGuide:GetQuestTitle(elem.questId) .. (isDone and " |cff00ff00(Done)|r" or "") .. "\n"
+                elseif elem.tag == "turnin" then
+                    local turnedIn = elem.questId and pfQuest_history and pfQuest_history[elem.questId]
+                    displayText = displayText .. "|cff00ff00[?] Turn in:|r " .. pfGuide:GetQuestTitle(elem.questId) .. (turnedIn and " |cff00ff00(Done)|r" or "") .. "\n"
+                elseif elem.tag == "complete" then
+                    local progText, isDone = pfGuide:GetObjectiveProgress(elem.questId, elem.objIndex)
+                    local title = pfGuide:GetQuestTitle(elem.questId)
+                    local main = (progText and progText ~= "") and progText or title
+                    displayText = displayText .. "|cffff5555[*]|r " .. main .. (isDone and " |cff00ff00(Done)|r" or "") .. "\n"
+                elseif elem.tag == "collect" then
+                    local count, isDone = pfGuide:IsCollectComplete(elem)
+                    local displayCount = isDone and (elem.qty or 1) or count
+                    local itemName = (pfDB and pfDB.items and pfDB.items.loc and pfDB.items.loc[elem.itemId]) or ("Item #" .. elem.itemId)
+                    displayText = displayText .. "|cffff5555[*]|r Collect " .. itemName .. string.format(" (%d/%d)", displayCount, elem.qty or 1) .. (isDone and " |cff00ff00(Done)|r" or "") .. "\n"
+                elseif elem.tag == "goto" and not hasDirectAction and #activeStep.gotoPoints <= 2 then
+                    displayText = displayText .. "|cff00bfff[>] Travel to:|r " .. string.format("%s (%.1f, %.1f)", elem.zone or "", elem.x or 0, elem.y or 0) .. "\n"
+                elseif elem.tag == "target" and not hasDirectAction then
+                    displayText = displayText .. "|cffffff00[Talk]|r " .. (activeStep.text ~= "" and activeStep.text or ("Talk to " .. (elem.target or "NPC"))) .. "\n"
+                elseif elem.tag == "train" or elem.tag == "trainer" then
+                    local spellName = (elem.spellId and GetSpellInfo(elem.spellId)) or (elem.text ~= "" and elem.text) or "Class Skills"
+                    local isKnown = elem.spellId and IsSpellKnown(elem.spellId)
+                    displayText = displayText .. "|cff00ffcc[T] Train:|r " .. spellName .. (isKnown and " |cff00ff00(Done)|r" or "") .. "\n"
+                elseif elem.tag == "vendor" then
+                    displayText = displayText .. "|cffffff00[Vendor]|r " .. (activeStep.text ~= "" and activeStep.text or "Sell Junk / Vendor Trash") .. "\n"
+                elseif elem.tag == "deathskip" then
+                    displayText = displayText .. "|cffff0000[Death]|r " .. (activeStep.text ~= "" and activeStep.text or "Die and respawn at Spirit Healer") .. "\n"
+                elseif elem.tag == "hs" then
+                    displayText = displayText .. "|cff00ccff[HS]|r " .. (activeStep.text ~= "" and activeStep.text or "Use Hearthstone") .. "\n"
+                elseif elem.tag == "info" then
+                    displayText = displayText .. elem.text .. "\n"
+                end
+            end
+        end
+
+        if displayText == "" then displayText = "Follow navigation arrow." end
+
+        -- Append ambient/passive side tasks
+        if #pfGuide.activePassiveSteps > 0 then
+            displayText = displayText .. "\n---------------------------------"
+            for _, pStep in ipairs(pfGuide.activePassiveSteps) do
+                for _, elem in ipairs(pStep.elements) do
+                    if elem.tag == "complete" then
+                        local progText, isDone = pfGuide:GetObjectiveProgress(elem.questId, elem.objIndex)
+                        local title = pfGuide:GetQuestTitle(elem.questId)
+                        local main = (progText and progText ~= "") and progText or title
+                        displayText = displayText .. "\n|cff888888[Side]|r " .. main
+                    elseif elem.tag == "collect" then
+                        local count, isDone = pfGuide:IsCollectComplete(elem)
+                        local displayCount = isDone and (elem.qty or 1) or count
+                        local itemName = (pfDB and pfDB.items and pfDB.items.loc and pfDB.items.loc[elem.itemId]) or ("Item #" .. elem.itemId)
+                        displayText = displayText .. string.format("\n|cff888888[Side]|r Collect %s (%d/%d)%s", itemName, displayCount, elem.qty or 1, isDone and " |cff00ff00(Done)|r" or "")
+                    end
+                end
+            end
+        end
+
+        pfQuestGuideWindow.text:SetText(displayText)
+        local lineCount = select(2, displayText:gsub("\n", "\n"))
+        pfQuestGuideWindow:SetHeight(math.max(65, 34 + lineCount * 14))
         return
     end
 
